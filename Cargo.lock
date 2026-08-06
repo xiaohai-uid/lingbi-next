@@ -267,6 +267,17 @@ version = "0.1.0"
 [[package]]
 name = "lingbi-mutation"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "lingbi-contracts",
+ "lingbi-security",
+ "lingbi-storage",
+ "serde",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "uuid",
+]
 
 [[package]]
 name = "lingbi-project"
