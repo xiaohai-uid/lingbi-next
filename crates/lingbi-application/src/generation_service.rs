@@ -3,27 +3,17 @@ use chrono::Utc;
 use futures_util::StreamExt;
 use lingbi_ai::{AiEvent, AiProvider, ChatMessage, ChatRequest};
 use lingbi_contracts::{AppError, ErrorCode};
-use lingbi_domain::Document;
-use serde::{Deserialize, Serialize};
-use std::fs;
+use lingbi_domain::{Candidate, CandidateStatus, Document};
+use lingbi_storage::CandidateRepository;
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GeneratedCandidate {
-    pub id: Uuid,
-    pub chapter_id: Uuid,
-    pub instruction: String,
-    pub content: String,
-    pub status: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-}
-
 pub struct GenerationService {
-    root: PathBuf,
     provider: Arc<dyn AiProvider>,
     documents: Arc<DocumentApplicationService>,
+    candidates: CandidateRepository,
 }
 
 impl GenerationService {
@@ -32,10 +22,11 @@ impl GenerationService {
         provider: Arc<dyn AiProvider>,
         documents: Arc<DocumentApplicationService>,
     ) -> Self {
+        let root = root.into();
         Self {
-            root: root.into(),
             provider,
             documents,
+            candidates: CandidateRepository::new(root),
         }
     }
 
@@ -43,7 +34,8 @@ impl GenerationService {
         &self,
         chapter_id: Uuid,
         instruction: impl Into<String>,
-    ) -> Result<GeneratedCandidate, AppError> {
+    ) -> Result<Candidate, AppError> {
+        let document = self.documents.get_document(chapter_id)?;
         let instruction = instruction.into();
         let request = ChatRequest {
             messages: vec![
@@ -78,37 +70,34 @@ impl GenerationService {
             ));
         }
 
-        let candidate = GeneratedCandidate {
+        let content_hash = hex_sha256(content.as_bytes());
+        let candidate = Candidate {
             id: Uuid::new_v4(),
-            chapter_id,
+            project_id: document.project_id,
+            document_id: chapter_id,
             instruction,
+            base_revision: document.revision,
+            base_content_hash: document.content_hash.clone(),
             content,
-            status: "pending".to_owned(),
+            content_hash,
+            provider_id: self.provider.provider_id().to_owned(),
+            model_id: self.provider.model_id().to_owned(),
+            status: CandidateStatus::Pending,
             created_at: Utc::now(),
+            approved_at: None,
+            committed_at: None,
         };
         self.write_candidate(&candidate)?;
         Ok(candidate)
     }
 
-    pub fn list(&self, chapter_id: Uuid) -> Result<Vec<GeneratedCandidate>, AppError> {
-        let dir = self.root.join(".lingbi/candidates");
-        if !dir.exists() {
-            return Ok(Vec::new());
-        }
-        let mut candidates = Vec::new();
-        for entry in fs::read_dir(&dir).map_err(io_error)? {
-            let entry = entry.map_err(io_error)?;
-            let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-                continue;
-            }
-            let candidate: GeneratedCandidate =
-                serde_json::from_slice(&fs::read(&path).map_err(io_error)?).map_err(parse_error)?;
-            if candidate.chapter_id == chapter_id {
-                candidates.push(candidate);
-            }
-        }
-        Ok(candidates)
+    pub fn list(&self, document_id: Uuid) -> Result<Vec<Candidate>, AppError> {
+        Ok(self
+            .candidates
+            .list()?
+            .into_iter()
+            .filter(|candidate| candidate.document_id == document_id)
+            .collect())
     }
 
     pub async fn adopt(
@@ -116,8 +105,8 @@ impl GenerationService {
         candidate_id: Uuid,
         expected_revision: u64,
     ) -> Result<Document, AppError> {
-        let candidate = self.read_candidate(candidate_id)?;
-        if candidate.status != "pending" {
+        let mut candidate = self.read_candidate(candidate_id)?;
+        if candidate.status != CandidateStatus::Pending {
             return Err(AppError::new(
                 ErrorCode::MutationNotApproved,
                 "candidate is not pending".to_owned(),
@@ -128,44 +117,34 @@ impl GenerationService {
         let document = self
             .documents
             .save_document(
-                candidate.chapter_id,
+                candidate.document_id,
                 expected_revision,
                 candidate.content.clone(),
             )
             .await?;
-        let mut adopted = candidate;
-        adopted.status = "adopted".to_owned();
-        self.write_candidate(&adopted)?;
+        candidate.commit();
+        self.write_candidate(&candidate)?;
         Ok(document)
     }
 
     pub fn reject(&self, candidate_id: Uuid) -> Result<(), AppError> {
         let mut candidate = self.read_candidate(candidate_id)?;
-        candidate.status = "rejected".to_owned();
+        candidate.reject();
         self.write_candidate(&candidate)
     }
 
-    fn read_candidate(&self, candidate_id: Uuid) -> Result<GeneratedCandidate, AppError> {
-        let path = self
-            .root
-            .join(".lingbi/candidates")
-            .join(format!("{candidate_id}.json"));
-        let bytes = fs::read(&path).map_err(|_| {
+    fn read_candidate(&self, candidate_id: Uuid) -> Result<Candidate, AppError> {
+        self.candidates.read(candidate_id)?.ok_or_else(|| {
             AppError::new(
                 ErrorCode::DocumentNotFound,
                 format!("candidate not found: {candidate_id}"),
                 false,
             )
-        })?;
-        serde_json::from_slice(&bytes).map_err(parse_error)
+        })
     }
 
-    fn write_candidate(&self, candidate: &GeneratedCandidate) -> Result<(), AppError> {
-        let dir = self.root.join(".lingbi/candidates");
-        fs::create_dir_all(&dir).map_err(io_error)?;
-        let path = dir.join(format!("{}.json", candidate.id));
-        let bytes = serde_json::to_vec(candidate).map_err(parse_error)?;
-        fs::write(path, bytes).map_err(io_error)
+    fn write_candidate(&self, candidate: &Candidate) -> Result<(), AppError> {
+        self.candidates.write(candidate)
     }
 }
 
@@ -182,20 +161,9 @@ fn ai_error(error: lingbi_ai::AiError) -> AppError {
     AppError::new(code, error.to_string(), retryable)
 }
 
-fn io_error(error: std::io::Error) -> AppError {
-    AppError::new(
-        ErrorCode::ProjectCorrupted,
-        format!("generation I/O failed: {error}"),
-        false,
-    )
-}
-
-fn parse_error(error: serde_json::Error) -> AppError {
-    AppError::new(
-        ErrorCode::ProjectCorrupted,
-        format!("candidate metadata parse failed: {error}"),
-        false,
-    )
+fn hex_sha256(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[cfg(test)]
@@ -234,7 +202,7 @@ mod tests {
             .await
             .expect("generate");
 
-        assert_eq!(candidate.status, "pending");
+        assert_eq!(candidate.status, CandidateStatus::Pending);
         assert_eq!(candidate.content, "第一章正文：雨夜。");
         assert_eq!(
             generation
@@ -293,7 +261,7 @@ mod tests {
         );
         assert_eq!(
             generation.list(snapshot.current_document.id).expect("list")[0].status,
-            "adopted"
+            CandidateStatus::Committed
         );
 
         let restarted = DocumentApplicationService::new(temp.path().join("novel"));

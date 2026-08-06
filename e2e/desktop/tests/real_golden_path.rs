@@ -1,6 +1,7 @@
 use lingbi_ai::FakeProvider;
 use lingbi_application::{
-    CreateProjectRequest, DocumentApplicationService, GenerationService, ProjectApplicationService,
+    CandidateStatus, CreateProjectRequest, DocumentApplicationService, GenerationService,
+    ProjectApplicationService,
 };
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -29,7 +30,7 @@ async fn real_desktop_golden_path() {
         .generate(created.current_document.id, "生成一个雨夜开场")
         .await
         .expect("generate candidate");
-    assert_eq!(candidate.status, "pending");
+    assert_eq!(candidate.status, CandidateStatus::Pending);
     assert!(candidate.content.contains("第一章正文"));
 
     let adopted = generation

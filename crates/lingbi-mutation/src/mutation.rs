@@ -1,38 +1,13 @@
 use chrono::Utc;
 use lingbi_contracts::{AppError, ErrorCode};
+use lingbi_domain::{Candidate, CandidateStatus};
 use lingbi_security::ProjectPathGuard;
-use lingbi_storage::{AtomicFileStore, DiskAtomicFileStore};
+use lingbi_storage::{AtomicFileStore, CandidateRepository, DiskAtomicFileStore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MutationProposal {
-    pub id: Uuid,
-    pub chapter_id: Uuid,
-    pub base_revision: u64,
-    pub payload: String,
-    pub idempotency_key: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CandidateStatus {
-    Pending,
-    Approved,
-    Committed,
-    Rejected,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MutationCandidate {
-    pub id: Uuid,
-    pub proposal: MutationProposal,
-    pub status: CandidateStatus,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Approval {
@@ -66,7 +41,7 @@ pub struct MutationEngine {
     root: PathBuf,
     guard: ProjectPathGuard,
     store: DiskAtomicFileStore,
-    candidates: HashMap<Uuid, MutationCandidate>,
+    candidates: CandidateRepository,
     approvals: HashMap<Uuid, Approval>,
     receipts: HashMap<String, CommitReceipt>,
     revisions: HashMap<PathBuf, u64>,
@@ -78,39 +53,19 @@ impl MutationEngine {
         let _ = std::fs::create_dir_all(&root);
         Self {
             guard: ProjectPathGuard::new(root.clone()),
-            root,
+            root: root.clone(),
             store: DiskAtomicFileStore,
-            candidates: HashMap::new(),
+            candidates: CandidateRepository::new(root),
             approvals: HashMap::new(),
             receipts: HashMap::new(),
             revisions: HashMap::new(),
         }
     }
 
-    pub fn propose(
-        &mut self,
-        chapter_id: Uuid,
-        base_revision: u64,
-        payload: impl Into<String>,
-        idempotency_key: impl Into<String>,
-    ) -> MutationCandidate {
-        let now = Utc::now();
-        let proposal = MutationProposal {
-            id: Uuid::new_v4(),
-            chapter_id,
-            base_revision,
-            payload: payload.into(),
-            idempotency_key: idempotency_key.into(),
-            created_at: now,
-        };
-        let candidate = MutationCandidate {
-            id: Uuid::new_v4(),
-            proposal,
-            status: CandidateStatus::Pending,
-            created_at: now,
-        };
-        self.candidates.insert(candidate.id, candidate.clone());
-        candidate
+    pub fn propose(&mut self, mut candidate: Candidate) -> Result<Candidate, AppError> {
+        candidate.status = CandidateStatus::Pending;
+        self.candidates.write(&candidate)?;
+        Ok(candidate)
     }
 
     pub fn approve(
@@ -118,7 +73,7 @@ impl MutationEngine {
         candidate_id: Uuid,
         actor: impl Into<String>,
     ) -> Result<Approval, AppError> {
-        let candidate = self.candidates.get_mut(&candidate_id).ok_or_else(|| {
+        let mut candidate = self.candidates.read(candidate_id)?.ok_or_else(|| {
             AppError::new(
                 ErrorCode::DocumentNotFound,
                 "candidate not found".to_owned(),
@@ -132,7 +87,8 @@ impl MutationEngine {
                 false,
             ));
         }
-        candidate.status = CandidateStatus::Approved;
+        candidate.approve();
+        self.candidates.write(&candidate)?;
         let approval = Approval {
             id: Uuid::new_v4(),
             candidate_id,
@@ -148,7 +104,7 @@ impl MutationEngine {
             return Ok(existing.clone());
         }
 
-        let candidate = self.candidates.get(&intent.candidate_id).ok_or_else(|| {
+        let mut candidate = self.candidates.read(intent.candidate_id)?.ok_or_else(|| {
             AppError::new(
                 ErrorCode::DocumentNotFound,
                 "candidate not found".to_owned(),
@@ -197,7 +153,7 @@ impl MutationEngine {
             ));
         }
 
-        let payload = candidate.proposal.payload.as_bytes();
+        let payload = candidate.content.as_bytes();
         let content_hash = hex_sha256(payload);
         self.store.write_atomic(&target, payload, None)?;
         let verified = self.store.read(&target)?;
@@ -221,9 +177,8 @@ impl MutationEngine {
         };
         self.receipts
             .insert(intent.idempotency_key.clone(), receipt.clone());
-        if let Some(candidate) = self.candidates.get_mut(&intent.candidate_id) {
-            candidate.status = CandidateStatus::Committed;
-        }
+        candidate.commit();
+        self.candidates.write(&candidate)?;
         Ok(receipt)
     }
 
@@ -243,11 +198,30 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
+    fn candidate(content: &str) -> Candidate {
+        Candidate {
+            id: Uuid::new_v4(),
+            project_id: Uuid::new_v4(),
+            document_id: Uuid::new_v4(),
+            instruction: "write".to_owned(),
+            base_revision: 0,
+            base_content_hash: "before".to_owned(),
+            content: content.to_owned(),
+            content_hash: hex_sha256(content.as_bytes()),
+            provider_id: "fake".to_owned(),
+            model_id: "fake-model".to_owned(),
+            status: CandidateStatus::Pending,
+            created_at: Utc::now(),
+            approved_at: None,
+            committed_at: None,
+        }
+    }
+
     #[tokio::test]
     async fn unapproved_commit_is_rejected() {
         let temp = TempDir::new().expect("temp dir");
         let mut engine = MutationEngine::new(temp.path().join("project"));
-        let candidate = engine.propose(Uuid::new_v4(), 0, "new content", "key-1");
+        let candidate = engine.propose(candidate("new content")).expect("propose");
 
         let result = engine.commit(CommitIntent {
             id: Uuid::new_v4(),
@@ -272,7 +246,7 @@ mod tests {
     async fn revision_conflict_is_rejected() {
         let temp = TempDir::new().expect("temp dir");
         let mut engine = MutationEngine::new(temp.path().join("project"));
-        let candidate = engine.propose(Uuid::new_v4(), 0, "new content", "key-1");
+        let candidate = engine.propose(candidate("new content")).expect("propose");
         let approval = engine.approve(candidate.id, "user").expect("approve");
 
         let result = engine.commit(CommitIntent {
@@ -297,7 +271,7 @@ mod tests {
     async fn approved_candidate_is_committed() {
         let temp = TempDir::new().expect("temp dir");
         let mut engine = MutationEngine::new(temp.path().join("project"));
-        let candidate = engine.propose(Uuid::new_v4(), 0, "new content", "key-1");
+        let candidate = engine.propose(candidate("new content")).expect("propose");
         let approval = engine.approve(candidate.id, "user").expect("approve");
 
         let receipt = engine
@@ -323,7 +297,7 @@ mod tests {
     async fn same_idempotency_key_does_not_double_write() {
         let temp = TempDir::new().expect("temp dir");
         let mut engine = MutationEngine::new(temp.path().join("project"));
-        let candidate = engine.propose(Uuid::new_v4(), 0, "new content", "key-1");
+        let candidate = engine.propose(candidate("new content")).expect("propose");
         let approval = engine.approve(candidate.id, "user").expect("approve");
         let intent = CommitIntent {
             id: Uuid::new_v4(),
@@ -352,7 +326,7 @@ mod tests {
         fs::write(&stale, "stale").expect("stale");
 
         let mut engine = MutationEngine::new(&root);
-        let candidate = engine.propose(Uuid::new_v4(), 0, "new content", "key-1");
+        let candidate = engine.propose(candidate("new content")).expect("propose");
         let approval = engine.approve(candidate.id, "user").expect("approve");
 
         assert_eq!(

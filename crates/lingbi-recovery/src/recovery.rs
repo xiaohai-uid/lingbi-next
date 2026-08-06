@@ -1,7 +1,7 @@
 use lingbi_contracts::{AppError, ErrorCode};
-use lingbi_domain::Document;
-use lingbi_mutation::{CandidateStatus, CommitIntent, MutationCandidate};
-use lingbi_storage::{AtomicFileStore, DiskAtomicFileStore};
+use lingbi_domain::{CandidateStatus, Document};
+use lingbi_mutation::CommitIntent;
+use lingbi_storage::{AtomicFileStore, CandidateRepository, DiskAtomicFileStore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -77,20 +77,12 @@ impl RecoveryService {
     }
 
     fn scan_candidates(&self, incidents: &mut Vec<RecoveryIncident>) -> Result<(), AppError> {
-        let candidates_dir = self.root.join(".lingbi/candidates");
-        if !candidates_dir.exists() {
-            return Ok(());
-        }
-
-        for entry in fs::read_dir(&candidates_dir).map_err(io_error)? {
-            let entry = entry.map_err(io_error)?;
-            let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-                continue;
-            }
-            let bytes = self.store.read(&path)?;
-            let candidate: MutationCandidate =
-                serde_json::from_slice(&bytes).map_err(parse_error)?;
+        let candidates = CandidateRepository::new(&self.root).list()?;
+        for candidate in candidates {
+            let path = self
+                .root
+                .join(".lingbi/candidates")
+                .join(format!("{}.json", candidate.id));
             let receipt = self
                 .root
                 .join(".lingbi/receipts")
@@ -210,7 +202,8 @@ fn hex_sha256(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lingbi_mutation::{CommitIntent, MutationCandidate, MutationProposal};
+    use lingbi_domain::Candidate;
+    use lingbi_mutation::CommitIntent;
     use std::fs;
     use std::path::Path;
     use tempfile::TempDir;
@@ -222,20 +215,22 @@ mod tests {
         fs::write(path, serde_json::to_vec(value).expect("json")).expect("write");
     }
 
-    fn candidate(status: CandidateStatus) -> MutationCandidate {
-        let now = chrono::Utc::now();
-        MutationCandidate {
+    fn candidate(status: CandidateStatus) -> Candidate {
+        Candidate {
             id: Uuid::new_v4(),
-            proposal: MutationProposal {
-                id: Uuid::new_v4(),
-                chapter_id: Uuid::new_v4(),
-                base_revision: 0,
-                payload: "candidate".to_owned(),
-                idempotency_key: "key".to_owned(),
-                created_at: now,
-            },
+            project_id: Uuid::new_v4(),
+            document_id: Uuid::new_v4(),
+            instruction: "write".to_owned(),
+            base_revision: 0,
+            base_content_hash: "before".to_owned(),
+            content: "candidate".to_owned(),
+            content_hash: "after".to_owned(),
+            provider_id: "fake".to_owned(),
+            model_id: "fake-model".to_owned(),
             status,
-            created_at: now,
+            created_at: chrono::Utc::now(),
+            approved_at: None,
+            committed_at: None,
         }
     }
 

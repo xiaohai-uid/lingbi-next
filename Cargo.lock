@@ -981,6 +981,7 @@ version = "0.1.0"
 dependencies = [
  "lingbi-ai",
  "lingbi-application",
+ "lingbi-recovery",
  "tempfile",
  "tokio",
 ]
@@ -1023,6 +1024,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "lingbi-contracts",
+ "lingbi-domain",
  "lingbi-security",
  "lingbi-storage",
  "serde",
@@ -1069,6 +1071,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "lingbi-contracts",
+ "lingbi-domain",
  "serde",
  "serde_json",
  "sha2",

@@ -74,6 +74,10 @@ impl AiError {
 
 #[async_trait]
 pub trait AiProvider: Send + Sync {
+    fn provider_id(&self) -> &str {
+        "unknown"
+    }
+
     async fn test_connection(&self) -> Result<ProviderHealth, AiError> {
         let started = Instant::now();
         let request = ChatRequest {
@@ -142,6 +146,10 @@ impl OpenAiCompatibleProvider {
 }
 
 impl AiProvider for OpenAiCompatibleProvider {
+    fn provider_id(&self) -> &str {
+        "openai-compatible"
+    }
+
     fn model_id(&self) -> &str {
         &self.model
     }
@@ -269,6 +277,10 @@ impl AnthropicProvider {
 }
 
 impl AiProvider for AnthropicProvider {
+    fn provider_id(&self) -> &str {
+        "anthropic"
+    }
+
     fn model_id(&self) -> &str {
         &self.model
     }
@@ -376,6 +388,10 @@ impl FakeProvider {
 }
 
 impl AiProvider for FakeProvider {
+    fn provider_id(&self) -> &str {
+        "fake"
+    }
+
     fn model_id(&self) -> &str {
         "fake-provider"
     }

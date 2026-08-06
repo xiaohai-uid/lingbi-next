@@ -1,6 +1,6 @@
 use lingbi_ai::{AiError, OpenAiCompatibleProvider};
 use lingbi_application::{
-    CreateProjectRequest, DocumentApplicationService, GeneratedCandidate, GenerationService,
+    Candidate, CreateProjectRequest, DocumentApplicationService, GenerationService,
     ProjectApplicationService, ProjectSessionSnapshot,
 };
 use lingbi_domain::{Document, Project};
@@ -207,7 +207,7 @@ async fn generation_start(
     state: State<'_, DesktopState>,
     chapter_id: String,
     instruction: String,
-) -> Result<GeneratedCandidate, String> {
+) -> Result<Candidate, String> {
     let chapter_id = Uuid::parse_str(&chapter_id).map_err(|error| error.to_string())?;
     let root = current_root(&state)?;
     let documents = document_service(&state, &root)?;
@@ -243,7 +243,7 @@ async fn generation_start(
 async fn candidate_list(
     state: State<'_, DesktopState>,
     chapter_id: String,
-) -> Result<Vec<GeneratedCandidate>, String> {
+) -> Result<Vec<Candidate>, String> {
     let root = current_root(&state)?;
     let service = generation_service(&state, &root)?;
     let chapter_id = Uuid::parse_str(&chapter_id).map_err(|error| error.to_string())?;

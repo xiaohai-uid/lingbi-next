@@ -28,11 +28,19 @@ export interface Session {
 
 export interface GeneratedCandidate {
   id: string;
-  chapter_id: string;
+  project_id: string;
+  document_id: string;
   instruction: string;
+  base_revision: number;
+  base_content_hash: string;
   content: string;
+  content_hash: string;
+  provider_id: string;
+  model_id: string;
   status: string;
   created_at: string;
+  approved_at: string | null;
+  committed_at: string | null;
 }
 
 const inTauri = () =>
@@ -156,11 +164,19 @@ export const desktop = {
     }
     return {
       id: crypto.randomUUID(),
-      chapter_id: chapterId,
+      project_id: crypto.randomUUID(),
+      document_id: chapterId,
       instruction,
+      base_revision: 0,
+      base_content_hash: "",
       content: "第一章正文：雨夜，林渊推开旧车站的门。",
+      content_hash: "",
+      provider_id: "fake",
+      model_id: "fake-provider",
       status: "pending",
       created_at: new Date().toISOString(),
+      approved_at: null,
+      committed_at: null,
     };
   },
 

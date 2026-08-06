@@ -78,6 +78,10 @@ impl DocumentApplicationService {
         Ok(documents)
     }
 
+    pub fn get_document(&self, document_id: Uuid) -> Result<Document, AppError> {
+        self.find_document(document_id)
+    }
+
     pub async fn save_document(
         &self,
         document_id: Uuid,

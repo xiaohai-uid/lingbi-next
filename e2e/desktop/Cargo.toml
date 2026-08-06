@@ -6,5 +6,6 @@ edition = "2024"
 [dependencies]
 lingbi-ai = { path = "../../crates/lingbi-ai" }
 lingbi-application = { path = "../../crates/lingbi-application" }
+lingbi-recovery = { path = "../../crates/lingbi-recovery" }
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
