@@ -28,6 +28,7 @@ Not Commercial GA. The following external gates are not yet satisfied:
 - Privacy baseline allow/deny policy: PASS
 - Signing policy documented: PASS
 - Failing-fast CI release gate: added
+- Flutter V2 shared fixture and Rust-edit/Flutter-reopen proof: PASS
 
 ## Remaining implementation work
 
@@ -35,7 +36,6 @@ Not Commercial GA. The following external gates are not yet satisfied:
 - DOCX import
 - Full Tauri updater integration and update manifest signature flow
 - Website purchase flow against a real billing provider
-- Flutter V2 compatibility fixture and cross-platform edit/reopen proof
 - Rust Core into Flutter migration order
 - Advanced feature gates after Desktop Golden Path
 

@@ -17,14 +17,21 @@ Run:
 
 ```bash
 cargo test -p lingbi-application --test project_v2_fixture
+flutter test test/project_v2_compatibility_test.dart
 ```
 
-Flutter V2 compatibility still needs:
+The shared fixture compatibility is verified end to end:
 
-- same fixture opens through Flutter production services
-- Rust edits the fixture
-- Flutter reopens it and reads identical content
-- same AppError, Candidate, and Mutation semantics
+- Rust production services open the fixture
+- Flutter production services open the fixture
+- Rust edits a copy through `DocumentApplicationService`
+- Flutter reopens that edited copy and reads the same revision, hash, and content
 
-This milestone is not complete until the Flutter side of the same fixture is
-verified.
+Run the real cross-platform proof:
+
+```bash
+scripts/cross-platform-v2-proof.sh
+```
+
+Rust Core `AppError`, Candidate, and Mutation semantics into Flutter remain
+Milestone 30 work.

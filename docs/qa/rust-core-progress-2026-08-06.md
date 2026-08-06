@@ -33,7 +33,7 @@ Date: 2026-08-06
 - Milestone 28: Privacy baseline allow/deny policy
 - Milestone 27: Signing policy for code, updater, and entitlement trust roots
 - Commercial readiness audit: Public Beta classification and external gate list
-- Milestone 29 partial: shared Project V2 fixture opens through Rust production services
+- Milestone 29: shared Project V2 fixture compatibility, including Rust edit and Flutter reopen proof
 - Milestone 30 partial: Project V2 C ABI bridge in lingbi-ffi
 
 ## Repositories
@@ -78,6 +78,14 @@ e7e4dab feat(cloud): add sandbox checkout and billing webhook endpoints
 acffc10 feat(security): add privacy baseline allow/deny policy
 324ce20 test(project): add shared Project V2 fixture compatibility
 684f7dd feat(ffi): add Project V2 C ABI bridge
+c96e80d test(project): add Rust edit helper for cross-platform V2 proof
+```
+
+Flutter branch commits:
+
+```text
+c23ccc0 fix(test): skip transient live provider failures
+092a6b1 test(project): add Rust-to-Flutter V2 reopen proof
 ```
 
 ## Verification
@@ -136,8 +144,9 @@ flutter analyze lib/
 No issues found
 
 flutter test --exclude-tags network --concurrency=1
-1523 passed
+1524 passed
 0 failed
+1 skipped (cross-platform test without Rust-generated fixture)
 
 flutter build windows --release
 PASS
@@ -147,7 +156,15 @@ flutter test integration_test/path2_windows_smoke_test.dart -d windows
 0 failed
 ```
 
+Cross-platform Project V2 proof:
+
+```text
+scripts/cross-platform-v2-proof.sh
+PASS
+```
+
 ## Next
 
-Continue with Tauri shell, Tauri permission boundary, Desktop UI Golden Path,
-and REAL Desktop E2E before beginning Go Cloud, Website, and Commerce work.
+Continue Milestone 30: migrate Rust Core into Flutter through
+`lingbi-ffi`/flutter_rust_bridge. After that, finish PDF export, DOCX import,
+updater integration, and the external Commercial GA gates.
