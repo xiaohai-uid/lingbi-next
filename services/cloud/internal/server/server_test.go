@@ -4,13 +4,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/xiaohai-uid/lingbi-next/services/cloud/internal/auth"
 )
 
 func TestHealthz(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	recorder := httptest.NewRecorder()
 
-	New().ServeHTTP(recorder, request)
+	New(auth.NewService()).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("healthz status = %d, want %d", recorder.Code, http.StatusOK)
@@ -24,7 +26,7 @@ func TestReadyz(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	recorder := httptest.NewRecorder()
 
-	New().ServeHTTP(recorder, request)
+	New(auth.NewService()).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("readyz status = %d, want %d", recorder.Code, http.StatusOK)
