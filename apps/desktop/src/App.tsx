@@ -41,6 +41,7 @@ function Welcome() {
 function Editor() {
   const [instruction, setInstruction] = useState("生成一个雨夜开场");
   const session = useAppStore((state) => state.session);
+  const documents = useAppStore((state) => state.documents);
   const documentContent = useAppStore((state) => state.documentContent);
   const candidate = useAppStore((state) => state.candidate);
   const generating = useAppStore((state) => state.generating);
@@ -52,6 +53,7 @@ function Editor() {
   const adoptCandidate = useAppStore((state) => state.adoptCandidate);
   const rejectCandidate = useAppStore((state) => state.rejectCandidate);
   const selectDocument = useAppStore((state) => state.selectDocument);
+  const createChapter = useAppStore((state) => state.createChapter);
   const setDocumentContent = (content: string) =>
     useAppStore.setState({ documentContent: content, session: session ? { ...session, dirty: true } : session });
 
@@ -61,12 +63,18 @@ function Editor() {
     <main className="editor-shell">
       <aside className="chapters">
         <h2>章节</h2>
-        <button
-          className={session.current_document.id ? "active" : ""}
-          onClick={() => selectDocument(session.current_document)}
-        >
-          {session.current_document.title}
-        </button>
+        {documents.map((document) => (
+          <button
+            key={document.id}
+            className={
+              document.id === session.current_document.id ? "active" : ""
+            }
+            onClick={() => selectDocument(document)}
+          >
+            {document.title}
+          </button>
+        ))}
+        <button onClick={createChapter}>新建章节</button>
       </aside>
       <section className="editor">
         <header>

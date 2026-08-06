@@ -176,6 +176,13 @@ async fn project_get_session(
 }
 
 #[tauri::command]
+async fn document_list(state: State<'_, DesktopState>) -> Result<Vec<Document>, CommandErrorDto> {
+    let root = current_root(&state)?;
+    let documents = document_service(&state, &root)?;
+    documents.list_documents().map_err(CommandErrorDto::from)
+}
+
+#[tauri::command]
 async fn document_create(
     state: State<'_, DesktopState>,
     project_id: String,
@@ -538,6 +545,7 @@ pub fn run() {
             project_create,
             project_open,
             project_get_session,
+            document_list,
             document_create,
             document_open,
             document_save,

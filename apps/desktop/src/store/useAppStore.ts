@@ -9,6 +9,7 @@ import {
 
 interface AppStore {
   session: Session | null;
+  documents: Document[];
   documentContent: string;
   candidate: GeneratedCandidate | null;
   generating: boolean;
@@ -19,6 +20,7 @@ interface AppStore {
   createProject: (name: string, root: string) => Promise<void>;
   openProject: (root: string) => Promise<void>;
   saveDocument: () => Promise<void>;
+  createChapter: () => Promise<void>;
   selectDocument: (document: Document) => Promise<void>;
   generate: (instruction: string) => Promise<void>;
   cancelGeneration: () => Promise<void>;
@@ -28,6 +30,7 @@ interface AppStore {
 
 export const useAppStore = create<AppStore>((set, get) => ({
   session: null,
+  documents: [],
   documentContent: "",
   candidate: null,
   generating: false,
@@ -41,8 +44,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
     try {
       const session = await desktop.createProject(name, root);
       const content = await desktop.openDocument(session.current_document.id);
+      const documents = await desktop.listDocuments();
       set({
         session,
+        documents,
         documentContent: content,
         selectedTab: "editor",
         status: "项目已创建",
@@ -57,7 +62,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     try {
       const session = await desktop.openProject(root);
       const content = await desktop.openDocument(session.current_document.id);
-      set({ session, documentContent: content, selectedTab: "editor", status: "项目已打开" });
+      const documents = await desktop.listDocuments();
+      set({ session, documents, documentContent: content, selectedTab: "editor", status: "项目已打开" });
     } catch (error) {
       set({ error: toCommandError(error).message, status: "" });
     }
@@ -79,8 +85,39 @@ export const useAppStore = create<AppStore>((set, get) => ({
           current_document: document,
           dirty: false,
         },
+        documents: get().documents.map((item) =>
+          item.id === document.id ? document : item,
+        ),
         status: "已保存",
       });
+    } catch (error) {
+      set({ error: toCommandError(error).message, status: "" });
+    }
+  },
+
+  async createChapter() {
+    const session = get().session;
+    if (!session) return;
+    set({ status: "创建章节...", error: null });
+    try {
+      const documents = await desktop.listDocuments();
+      const nextTitle =
+        documents.length === 1 ? "第二章" : `第${documents.length + 1}章`;
+      const document = await desktop.createDocument(
+        session.project.id,
+        nextTitle,
+        "",
+      );
+      const updatedDocuments = [...documents, document];
+      const content = await desktop.openDocument(document.id);
+      set((state) => ({
+        session: state.session
+          ? { ...state.session, current_document: document, dirty: false }
+          : null,
+        documents: updatedDocuments,
+        documentContent: content,
+        status: "章节已创建",
+      }));
     } catch (error) {
       set({ error: toCommandError(error).message, status: "" });
     }
@@ -93,6 +130,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         ? { ...state.session, current_document: document }
         : null,
       documentContent: content,
+      status: "已切换",
     }));
   },
 
@@ -149,6 +187,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
           current_document: document,
           dirty: false,
         },
+        documents: get().documents.map((item) =>
+          item.id === document.id ? document : item,
+        ),
         documentContent: candidate.content,
         candidate: null,
         status: "已采纳",

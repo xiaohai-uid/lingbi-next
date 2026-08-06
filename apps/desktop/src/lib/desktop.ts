@@ -84,6 +84,8 @@ const inTauri = () =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 const mockSessions = new Map<string, Session>();
+const mockDocuments = new Map<string, Document[]>();
+const mockContents = new Map<string, string>();
 
 async function generateStreaming(
   chapterId: string,
@@ -149,6 +151,8 @@ export const desktop = {
       },
     };
     mockSessions.set(root, session);
+    mockDocuments.set(root, [session.current_document]);
+    mockContents.set(session.current_document.id, "# 第一章\n\n浏览器预览模式");
     return session;
   },
 
@@ -168,6 +172,15 @@ export const desktop = {
     return [...mockSessions.values()].at(-1) ?? null;
   },
 
+  async listDocuments(): Promise<Document[]> {
+    if (inTauri()) {
+      return invoke<Document[]>("document_list");
+    }
+    const session = [...mockSessions.values()].at(-1);
+    if (!session) return [];
+    return mockDocuments.get(session.root) ?? [];
+  },
+
   async createDocument(
     projectId: string,
     title: string,
@@ -180,14 +193,31 @@ export const desktop = {
         content,
       });
     }
-    throw new Error("document creation is not wired in browser mock");
+    const session = [...mockSessions.values()].at(-1);
+    if (!session) throw new Error("no session");
+    const now = new Date().toISOString();
+    const document: Document = {
+      id: crypto.randomUUID(),
+      project_id: projectId,
+      title,
+      order: (mockDocuments.get(session.root)?.length ?? 0),
+      revision: 0,
+      content_hash: "",
+      created_at: now,
+      updated_at: now,
+    };
+    const documents = [...(mockDocuments.get(session.root) ?? [])];
+    documents.push(document);
+    mockDocuments.set(session.root, documents);
+    mockContents.set(document.id, content);
+    return document;
   },
 
   async openDocument(documentId: string): Promise<string> {
     if (inTauri()) {
       return invoke<string>("document_open", { documentId });
     }
-    return "# 第一章\n\n浏览器预览模式";
+    return mockContents.get(documentId) ?? "";
   },
 
   async saveDocument(
