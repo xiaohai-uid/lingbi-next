@@ -744,6 +744,12 @@ dependencies = [
 [[package]]
 name = "lingbi-ffi"
 version = "0.1.0"
+dependencies = [
+ "lingbi-application",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
 
 [[package]]
 name = "lingbi-import-export"
