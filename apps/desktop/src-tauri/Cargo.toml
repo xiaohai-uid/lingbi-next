@@ -15,6 +15,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+lingbi-ai = { path = "../../../crates/lingbi-ai" }
 lingbi-application = { path = "../../../crates/lingbi-application" }
 lingbi-contracts = { path = "../../../crates/lingbi-contracts" }
 lingbi-domain = { path = "../../../crates/lingbi-domain" }

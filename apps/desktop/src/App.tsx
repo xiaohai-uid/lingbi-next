@@ -39,11 +39,17 @@ function Welcome() {
 }
 
 function Editor() {
+  const [instruction, setInstruction] = useState("生成一个雨夜开场");
   const session = useAppStore((state) => state.session);
   const documentContent = useAppStore((state) => state.documentContent);
+  const candidate = useAppStore((state) => state.candidate);
+  const generating = useAppStore((state) => state.generating);
   const status = useAppStore((state) => state.status);
   const error = useAppStore((state) => state.error);
   const saveDocument = useAppStore((state) => state.saveDocument);
+  const generate = useAppStore((state) => state.generate);
+  const adoptCandidate = useAppStore((state) => state.adoptCandidate);
+  const rejectCandidate = useAppStore((state) => state.rejectCandidate);
   const selectDocument = useAppStore((state) => state.selectDocument);
   const setDocumentContent = (content: string) =>
     useAppStore.setState({ documentContent: content, session: session ? { ...session, dirty: true } : session });
@@ -74,14 +80,28 @@ function Editor() {
         />
         <footer>
           <button onClick={saveDocument}>保存</button>
+          <input
+            aria-label="写作要求"
+            value={instruction}
+            onChange={(event) => setInstruction(event.target.value)}
+          />
+          <button disabled={generating} onClick={() => generate(instruction)}>
+            {generating ? "生成中" : "生成"}
+          </button>
           {error ? <span className="error">{error}</span> : null}
         </footer>
       </section>
       <aside className="candidate">
         <h2>候选</h2>
-        <p>AI 生成后在此确认</p>
-        <button disabled>采纳</button>
-        <button disabled>拒绝</button>
+        {candidate ? (
+          <>
+            <p>{candidate.content}</p>
+            <button onClick={adoptCandidate}>采纳</button>
+            <button onClick={rejectCandidate}>拒绝</button>
+          </>
+        ) : (
+          <p>{generating ? "AI 正在创作..." : "AI 生成后在此确认"}</p>
+        )}
       </aside>
     </main>
   );

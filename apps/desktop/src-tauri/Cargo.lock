@@ -1701,8 +1701,11 @@ name = "lingbi-application"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "futures-util",
+ "lingbi-ai",
  "lingbi-contracts",
  "lingbi-domain",
+ "lingbi-mutation",
  "lingbi-security",
  "lingbi-storage",
  "serde",
@@ -1722,6 +1725,7 @@ dependencies = [
 name = "lingbi-desktop"
 version = "0.1.0"
 dependencies = [
+ "lingbi-ai",
  "lingbi-application",
  "lingbi-contracts",
  "lingbi-domain",
@@ -1740,6 +1744,19 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "serde",
+ "uuid",
+]
+
+[[package]]
+name = "lingbi-mutation"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "lingbi-contracts",
+ "lingbi-security",
+ "lingbi-storage",
+ "serde",
+ "sha2",
  "uuid",
 ]
 

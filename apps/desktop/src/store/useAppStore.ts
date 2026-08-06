@@ -1,9 +1,16 @@
 import { create } from "zustand";
-import { desktop, type Document, type Session } from "../lib/desktop";
+import {
+  desktop,
+  type Document,
+  type GeneratedCandidate,
+  type Session,
+} from "../lib/desktop";
 
 interface AppStore {
   session: Session | null;
   documentContent: string;
+  candidate: GeneratedCandidate | null;
+  generating: boolean;
   status: string;
   error: string | null;
   selectedTab: "welcome" | "editor";
@@ -11,11 +18,16 @@ interface AppStore {
   openProject: (root: string) => Promise<void>;
   saveDocument: () => Promise<void>;
   selectDocument: (document: Document) => Promise<void>;
+  generate: (instruction: string) => Promise<void>;
+  adoptCandidate: () => Promise<void>;
+  rejectCandidate: () => Promise<void>;
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
   session: null,
   documentContent: "",
+  candidate: null,
+  generating: false,
   status: "",
   error: null,
   selectedTab: "welcome",
@@ -78,5 +90,60 @@ export const useAppStore = create<AppStore>((set, get) => ({
         : null,
       documentContent: content,
     }));
+  },
+
+  async generate(instruction) {
+    const session = get().session;
+    if (!session) return;
+    set({ generating: true, error: null, status: "生成中..." });
+    try {
+      const candidate = await desktop.generate(
+        session.current_document.id,
+        instruction,
+      );
+      set({
+        candidate,
+        generating: false,
+        status: "候选已生成",
+      });
+    } catch (error) {
+      set({ generating: false, error: String(error), status: "" });
+    }
+  },
+
+  async adoptCandidate() {
+    const session = get().session;
+    const candidate = get().candidate;
+    if (!session || !candidate) return;
+    set({ status: "采纳中...", error: null });
+    try {
+      const document = await desktop.candidateAdopt(
+        candidate.id,
+        session.current_document.revision,
+      );
+      set({
+        session: {
+          ...session,
+          current_document: document,
+          dirty: false,
+        },
+        documentContent: candidate.content,
+        candidate: null,
+        status: "已采纳",
+      });
+    } catch (error) {
+      set({ error: String(error), status: "" });
+    }
+  },
+
+  async rejectCandidate() {
+    const candidate = get().candidate;
+    if (!candidate) return;
+    try {
+      await desktop.candidateReject(candidate.id);
+      set({ candidate: null, status: "已拒绝" });
+    } catch (error) {
+      set({ error: String(error), status: "" });
+    }
   },
 }));

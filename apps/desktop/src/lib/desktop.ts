@@ -26,6 +26,15 @@ export interface Session {
   root: string;
 }
 
+export interface GeneratedCandidate {
+  id: string;
+  chapter_id: string;
+  instruction: string;
+  content: string;
+  status: string;
+  created_at: string;
+}
+
 const inTauri = () =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -119,5 +128,71 @@ export const desktop = {
       revision: expectedRevision + 1,
       updated_at: new Date().toISOString(),
     };
+  },
+
+  async providerConfigure(
+    key: string,
+    baseUrl: string,
+    model: string,
+  ): Promise<void> {
+    if (inTauri()) {
+      await invoke("provider_configure", {
+        key,
+        baseUrl,
+        model,
+      });
+    }
+  },
+
+  async generate(
+    chapterId: string,
+    instruction: string,
+  ): Promise<GeneratedCandidate> {
+    if (inTauri()) {
+      return invoke<GeneratedCandidate>("generation_start", {
+        chapterId,
+        instruction,
+      });
+    }
+    return {
+      id: crypto.randomUUID(),
+      chapter_id: chapterId,
+      instruction,
+      content: "第一章正文：雨夜，林渊推开旧车站的门。",
+      status: "pending",
+      created_at: new Date().toISOString(),
+    };
+  },
+
+  async candidateList(chapterId: string): Promise<GeneratedCandidate[]> {
+    if (inTauri()) {
+      return invoke<GeneratedCandidate[]>("candidate_list", { chapterId });
+    }
+    return [];
+  },
+
+  async candidateAdopt(
+    candidateId: string,
+    expectedRevision: number,
+  ): Promise<Document> {
+    if (inTauri()) {
+      return invoke<Document>("candidate_adopt", {
+        candidateId,
+        expectedRevision,
+      });
+    }
+    const session = [...mockSessions.values()].at(-1);
+    if (!session) throw new Error("no session");
+    return {
+      ...session.current_document,
+      revision: expectedRevision + 1,
+      updated_at: new Date().toISOString(),
+    };
+  },
+
+  async candidateReject(candidateId: string): Promise<void> {
+    if (inTauri()) {
+      await invoke("candidate_reject", { candidateId });
+    }
   },
 };

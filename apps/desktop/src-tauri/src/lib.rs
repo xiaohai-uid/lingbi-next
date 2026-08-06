@@ -1,6 +1,7 @@
+use lingbi_ai::{AiError, OpenAiCompatibleProvider};
 use lingbi_application::{
-    CreateProjectRequest, DocumentApplicationService, ProjectApplicationService,
-    ProjectSessionSnapshot,
+    CreateProjectRequest, DocumentApplicationService, GeneratedCandidate, GenerationService,
+    ProjectApplicationService, ProjectSessionSnapshot,
 };
 use lingbi_domain::{Document, Project};
 use lingbi_security::{MemorySecretStore, SecretStore, SecretString};
@@ -18,6 +19,7 @@ struct DesktopState {
     current: Mutex<Option<CurrentSession>>,
     secrets: MemorySecretStore,
     generation: GenerationManager,
+    generation_services: Mutex<HashMap<String, Arc<GenerationService>>>,
 }
 
 #[derive(Clone)]
@@ -158,10 +160,33 @@ struct ProviderTestDto {
 }
 
 #[tauri::command]
-async fn provider_configure(state: State<'_, DesktopState>, key: String) -> Result<(), String> {
+async fn provider_configure(
+    state: State<'_, DesktopState>,
+    key: String,
+    base_url: Option<String>,
+    model: Option<String>,
+) -> Result<(), String> {
     state
         .secrets
         .put("provider_key", SecretString::new(key))
+        .await
+        .map_err(|error| error.message)?;
+    state
+        .secrets
+        .put(
+            "provider_base_url",
+            SecretString::new(
+                base_url.unwrap_or_else(|| "https://api.openai.com/v1/chat/completions".to_owned()),
+            ),
+        )
+        .await
+        .map_err(|error| error.message)?;
+    state
+        .secrets
+        .put(
+            "provider_model",
+            SecretString::new(model.unwrap_or_else(|| "gpt-4o-mini".to_owned())),
+        )
         .await
         .map_err(|error| error.message)
 }
@@ -182,15 +207,73 @@ async fn generation_start(
     state: State<'_, DesktopState>,
     chapter_id: String,
     instruction: String,
-) -> Result<String, String> {
+) -> Result<GeneratedCandidate, String> {
     let chapter_id = Uuid::parse_str(&chapter_id).map_err(|error| error.to_string())?;
-    Ok(state
-        .generation
-        .start_generation(GenerationRequest {
-            chapter_id,
-            instruction,
-        })
-        .to_string())
+    let root = current_root(&state)?;
+    let documents = document_service(&state, &root)?;
+    let provider = configured_provider(&state).await?;
+    let service = Arc::new(GenerationService::new(root.clone(), provider, documents));
+    state
+        .generation_services
+        .lock()
+        .map_err(|_| "generation service lock".to_owned())?
+        .insert(root.clone(), service.clone());
+    let task_id = state.generation.start_generation(GenerationRequest {
+        chapter_id,
+        instruction: instruction.clone(),
+    });
+    match service.generate(chapter_id, instruction).await {
+        Ok(candidate) => {
+            state
+                .generation
+                .complete_success(task_id)
+                .map_err(|error| error.message)?;
+            Ok(candidate)
+        }
+        Err(error) => {
+            let _ = state
+                .generation
+                .complete_failure(task_id, AiError::InvalidResponse);
+            Err(error.message)
+        }
+    }
+}
+
+#[tauri::command]
+async fn candidate_list(
+    state: State<'_, DesktopState>,
+    chapter_id: String,
+) -> Result<Vec<GeneratedCandidate>, String> {
+    let root = current_root(&state)?;
+    let service = generation_service(&state, &root)?;
+    let chapter_id = Uuid::parse_str(&chapter_id).map_err(|error| error.to_string())?;
+    service.list(chapter_id).map_err(|error| error.message)
+}
+
+#[tauri::command]
+async fn candidate_adopt(
+    state: State<'_, DesktopState>,
+    candidate_id: String,
+    expected_revision: u64,
+) -> Result<Document, String> {
+    let root = current_root(&state)?;
+    let service = generation_service(&state, &root)?;
+    let candidate_id = Uuid::parse_str(&candidate_id).map_err(|error| error.to_string())?;
+    service
+        .adopt(candidate_id, expected_revision)
+        .await
+        .map_err(|error| error.message)
+}
+
+#[tauri::command]
+async fn candidate_reject(
+    state: State<'_, DesktopState>,
+    candidate_id: String,
+) -> Result<(), String> {
+    let root = current_root(&state)?;
+    let service = generation_service(&state, &root)?;
+    let candidate_id = Uuid::parse_str(&candidate_id).map_err(|error| error.to_string())?;
+    service.reject(candidate_id).map_err(|error| error.message)
 }
 
 #[tauri::command]
@@ -234,6 +317,49 @@ fn document_service(
         .ok_or_else(|| "document service not initialized".to_owned())
 }
 
+fn generation_service(
+    state: &State<'_, DesktopState>,
+    root: &str,
+) -> Result<Arc<GenerationService>, String> {
+    state
+        .generation_services
+        .lock()
+        .map_err(|_| "generation service lock".to_owned())?
+        .get(root)
+        .cloned()
+        .ok_or_else(|| "generation service not initialized".to_owned())
+}
+
+async fn configured_provider(
+    state: &State<'_, DesktopState>,
+) -> Result<Arc<dyn lingbi_ai::AiProvider>, String> {
+    let key = state
+        .secrets
+        .get("provider_key")
+        .await
+        .map_err(|error| error.message)?
+        .ok_or_else(|| "provider key is not configured".to_owned())?;
+    let base_url = state
+        .secrets
+        .get("provider_base_url")
+        .await
+        .map_err(|error| error.message)?
+        .map(|value| value.expose().to_owned())
+        .unwrap_or_else(|| "https://api.openai.com/v1/chat/completions".to_owned());
+    let model = state
+        .secrets
+        .get("provider_model")
+        .await
+        .map_err(|error| error.message)?
+        .map(|value| value.expose().to_owned())
+        .unwrap_or_else(|| "gpt-4o-mini".to_owned());
+    Ok(Arc::new(OpenAiCompatibleProvider::new(
+        key.expose(),
+        base_url,
+        model,
+    )))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -250,6 +376,9 @@ pub fn run() {
             generation_start,
             generation_cancel,
             generation_status,
+            candidate_list,
+            candidate_adopt,
+            candidate_reject,
         ])
         .run(tauri::generate_context!())
         .expect("error while running LingBi Next");
