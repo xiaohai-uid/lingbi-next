@@ -5,5 +5,5 @@ pub mod update_signature;
 
 pub use privacy::PrivacyBaseline;
 pub use project_path::ProjectPathGuard;
-pub use secret_store::{MemorySecretStore, SecretStore, SecretString};
+pub use secret_store::{KeyringSecretStore, MemorySecretStore, SecretStore, SecretString};
 pub use update_signature::UpdateSignatureVerifier;

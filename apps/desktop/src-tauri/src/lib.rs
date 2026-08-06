@@ -5,7 +5,7 @@ use lingbi_application::{
 };
 use lingbi_contracts::AppError;
 use lingbi_domain::{Document, Project};
-use lingbi_security::{MemorySecretStore, SecretStore, SecretString};
+use lingbi_security::{KeyringSecretStore, SecretStore, SecretString};
 use lingbi_writing::{GenerationManager, GenerationRequest, GenerationState};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -18,7 +18,7 @@ struct DesktopState {
     project_service: Arc<ProjectApplicationService>,
     document_services: Mutex<HashMap<String, Arc<DocumentApplicationService>>>,
     current: Mutex<Option<CurrentSession>>,
-    secrets: MemorySecretStore,
+    secrets: KeyringSecretStore,
     generation: GenerationManager,
     generation_services: Mutex<HashMap<String, Arc<GenerationService>>>,
 }

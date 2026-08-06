@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 async-trait = "0.1"
 ed25519-dalek = "2"
+keyring = "3"
 lingbi-contracts = { path = "../lingbi-contracts" }
 
 [dev-dependencies]
