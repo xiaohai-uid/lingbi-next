@@ -103,7 +103,7 @@ impl GenerationService {
     pub async fn adopt(
         &self,
         candidate_id: Uuid,
-        expected_revision: u64,
+        _expected_revision: u64,
     ) -> Result<Document, AppError> {
         let mut candidate = self.read_candidate(candidate_id)?;
         if candidate.status != CandidateStatus::Pending {
@@ -113,12 +113,26 @@ impl GenerationService {
                 false,
             ));
         }
+        let current = self.documents.get_document(candidate.document_id)?;
+        if current.revision != candidate.base_revision
+            || !current
+                .content_hash
+                .eq_ignore_ascii_case(&candidate.base_content_hash)
+        {
+            candidate.mark_stale();
+            self.write_candidate(&candidate)?;
+            return Err(AppError::new(
+                ErrorCode::CandidateStale,
+                "candidate is stale".to_owned(),
+                false,
+            ));
+        }
 
         let document = self
             .documents
             .save_document(
                 candidate.document_id,
-                expected_revision,
+                current.revision,
                 candidate.content.clone(),
             )
             .await?;
@@ -271,6 +285,50 @@ mod tests {
                 .await
                 .expect("restart read"),
             "第一章正文：雨夜。"
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_candidate_is_rejected_and_user_edits_survive() {
+        let (temp, snapshot, documents) = setup().await;
+        let provider = Arc::new(FakeProvider::new("AI 候选正文"));
+        let generation =
+            GenerationService::new(temp.path().join("novel"), provider, documents.clone());
+        let candidate = generation
+            .generate(snapshot.current_document.id, "写")
+            .await
+            .expect("generate");
+
+        documents
+            .save_document(
+                snapshot.current_document.id,
+                snapshot.current_document.revision,
+                "用户手动保存的新正文",
+            )
+            .await
+            .expect("user save");
+
+        let result = generation
+            .adopt(candidate.id, snapshot.current_document.revision)
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(AppError {
+                code: ErrorCode::CandidateStale,
+                ..
+            })
+        ));
+        assert_eq!(
+            documents
+                .read_document(snapshot.current_document.id)
+                .await
+                .expect("read"),
+            "用户手动保存的新正文"
+        );
+        assert_eq!(
+            generation.list(snapshot.current_document.id).expect("list")[0].status,
+            CandidateStatus::Stale
         );
     }
 }

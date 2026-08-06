@@ -22,6 +22,7 @@ pub enum ErrorCode {
 
     MutationConflict,
     MutationNotApproved,
+    CandidateStale,
 
     ImportUnsupportedFormat,
     PackageUnsafePath,
