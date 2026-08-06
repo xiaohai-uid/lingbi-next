@@ -1,0 +1,12 @@
+{
+  "/_not-found/page": "/_not-found",
+  "/download/page": "/download",
+  "/account/page": "/account",
+  "/login/page": "/login",
+  "/pricing/page": "/pricing",
+  "/page": "/",
+  "/privacy/page": "/privacy",
+  "/releases/page": "/releases",
+  "/account/subscription/page": "/account/subscription",
+  "/terms/page": "/terms"
+}
