@@ -1,3 +1,6 @@
+pub mod api;
+mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be accurate, and you can change it according to your needs. */
+
 use lingbi_application::ProjectApplicationService;
 use std::ffi::{CStr, CString, c_char};
 use std::path::PathBuf;
