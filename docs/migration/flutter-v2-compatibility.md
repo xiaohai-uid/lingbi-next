@@ -45,6 +45,8 @@ Milestone 30 now exposes Project V2 parsing through flutter_rust_bridge:
 - generated Dart bindings live in the Flutter app under `lib/src/rust`
 - `RustCore` in Flutter initializes the bridge and calls `openProject`
 - Cargokit bundles `lingbi_ffi.dll` into the Windows release build
+- document storage is exposed through `listDocuments`, `readDocument`,
+  `createDocument`, and `saveDocument`
 
 Run:
 
@@ -52,5 +54,5 @@ Run:
 scripts/flutter-rust-bridge-proof.sh
 ```
 
-The remaining Milestone 30 order is document storage, mutation, recovery, AI
-provider, generation, and import/export.
+The remaining Milestone 30 order is mutation, recovery, AI provider,
+generation, and import/export.

@@ -36,7 +36,7 @@ Not Commercial GA. The following external gates are not yet satisfied:
 - DOCX import
 - Full Tauri updater integration and update manifest signature flow
 - Website purchase flow against a real billing provider
-- Rust Core into Flutter migration order (project parsing wired; storage onward remains)
+- Rust Core into Flutter migration order (project parsing and document storage wired; mutation onward remains)
 - Advanced feature gates after Desktop Golden Path
 
 ## Known failures
