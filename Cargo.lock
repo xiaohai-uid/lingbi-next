@@ -1067,9 +1067,13 @@ dependencies = [
 name = "lingbi-storage"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "lingbi-contracts",
+ "serde",
+ "serde_json",
  "sha2",
  "tempfile",
+ "uuid",
 ]
 
 [[package]]
