@@ -31,6 +31,26 @@ impl DocumentRepository {
         Ok(self.list()?.into_iter().find(|document| document.id == id))
     }
 
+    pub fn update(&self, document: &Document) -> Result<(), AppError> {
+        let mut documents = self.list()?;
+        let Some(index) = documents.iter().position(|item| item.id == document.id) else {
+            return Err(AppError::new(
+                ErrorCode::DocumentNotFound,
+                format!("document not found: {}", document.id),
+                false,
+            ));
+        };
+        documents[index] = document.clone();
+        self.write(&documents)
+    }
+
+    pub fn write(&self, documents: &[Document]) -> Result<(), AppError> {
+        let path = self.index_path();
+        let bytes = serde_json::to_vec(documents).map_err(parse_error)?;
+        self.store.write_atomic(&path, &bytes, None)?;
+        Ok(())
+    }
+
     fn index_path(&self) -> PathBuf {
         self.root.join(".lingbi/documents.json")
     }

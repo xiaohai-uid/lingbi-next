@@ -106,6 +106,15 @@ impl IntentRepository {
     fn intent_path(&self, id: Uuid) -> PathBuf {
         self.root.join(".lingbi/intents").join(format!("{id}.json"))
     }
+
+    pub fn delete(&self, id: Uuid) -> Result<(), AppError> {
+        let path = self.intent_path(id);
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(io_error(error)),
+        }
+    }
 }
 
 pub struct ReceiptRepository {

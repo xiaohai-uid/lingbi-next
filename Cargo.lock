@@ -979,11 +979,17 @@ dependencies = [
 name = "lingbi-e2e-desktop"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "lingbi-ai",
  "lingbi-application",
+ "lingbi-domain",
+ "lingbi-mutation",
  "lingbi-recovery",
+ "lingbi-storage",
+ "sha2",
  "tempfile",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
