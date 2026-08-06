@@ -30,6 +30,7 @@ Date: 2026-08-06
 - Milestone 22: Signed update manifest verification primitive
 - Milestone 25: Sandbox checkout and billing webhook endpoints
 - Milestone 26: Failing-fast CI gate across Rust, frontend, website, Go, and Tauri
+- Milestone 28: Privacy baseline allow/deny policy
 
 ## Repositories
 
@@ -70,6 +71,7 @@ b9f3f56 test(e2e): verify offline manuscript remains usable when AI fails
 2a618e6 feat(security): add signed update manifest verification
 e7e4dab feat(cloud): add sandbox checkout and billing webhook endpoints
 34bd816 ci: add LingBi Next release gate pipeline
+acffc10 feat(security): add privacy baseline allow/deny policy
 ```
 
 ## Verification
