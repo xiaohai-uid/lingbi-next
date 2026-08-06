@@ -286,6 +286,18 @@ version = "0.1.0"
 [[package]]
 name = "lingbi-recovery"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "lingbi-contracts",
+ "lingbi-domain",
+ "lingbi-mutation",
+ "lingbi-storage",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "uuid",
+]
 
 [[package]]
 name = "lingbi-security"
