@@ -34,6 +34,7 @@ Date: 2026-08-06
 - Milestone 27: Signing policy for code, updater, and entitlement trust roots
 - Commercial readiness audit: Public Beta classification and external gate list
 - Milestone 29 partial: shared Project V2 fixture opens through Rust production services
+- Milestone 30 partial: Project V2 C ABI bridge in lingbi-ffi
 
 ## Repositories
 
@@ -75,6 +76,8 @@ b9f3f56 test(e2e): verify offline manuscript remains usable when AI fails
 e7e4dab feat(cloud): add sandbox checkout and billing webhook endpoints
 34bd816 ci: add LingBi Next release gate pipeline
 acffc10 feat(security): add privacy baseline allow/deny policy
+324ce20 test(project): add shared Project V2 fixture compatibility
+684f7dd feat(ffi): add Project V2 C ABI bridge
 ```
 
 ## Verification
