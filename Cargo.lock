@@ -625,8 +625,10 @@ dependencies = [
 name = "lingbi-security"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "lingbi-contracts",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -641,6 +643,13 @@ dependencies = [
 [[package]]
 name = "lingbi-writing"
 version = "0.1.0"
+dependencies = [
+ "lingbi-ai",
+ "lingbi-contracts",
+ "serde",
+ "tokio",
+ "uuid",
+]
 
 [[package]]
 name = "linux-raw-sys"
