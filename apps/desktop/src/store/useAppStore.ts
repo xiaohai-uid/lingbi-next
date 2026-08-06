@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import {
   desktop,
+  toCommandError,
   type Document,
   type GeneratedCandidate,
   type Session,
@@ -44,7 +45,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         status: "项目已创建",
       });
     } catch (error) {
-      set({ error: String(error), status: "" });
+      set({ error: toCommandError(error).message, status: "" });
     }
   },
 
@@ -55,7 +56,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const content = await desktop.openDocument(session.current_document.id);
       set({ session, documentContent: content, selectedTab: "editor", status: "项目已打开" });
     } catch (error) {
-      set({ error: String(error), status: "" });
+      set({ error: toCommandError(error).message, status: "" });
     }
   },
 
@@ -78,7 +79,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         status: "已保存",
       });
     } catch (error) {
-      set({ error: String(error), status: "" });
+      set({ error: toCommandError(error).message, status: "" });
     }
   },
 
@@ -107,7 +108,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         status: "候选已生成",
       });
     } catch (error) {
-      set({ generating: false, error: String(error), status: "" });
+      set({ generating: false, error: toCommandError(error).message, status: "" });
     }
   },
 
@@ -132,7 +133,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         status: "已采纳",
       });
     } catch (error) {
-      set({ error: String(error), status: "" });
+      set({ error: toCommandError(error).message, status: "" });
     }
   },
 
@@ -143,7 +144,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       await desktop.candidateReject(candidate.id);
       set({ candidate: null, status: "已拒绝" });
     } catch (error) {
-      set({ error: String(error), status: "" });
+      set({ error: toCommandError(error).message, status: "" });
     }
   },
 }));

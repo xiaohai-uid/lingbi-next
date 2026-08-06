@@ -43,6 +43,34 @@ export interface GeneratedCandidate {
   committed_at: string | null;
 }
 
+export interface CommandError {
+  code: string;
+  message: string;
+  retryable: boolean;
+}
+
+export function toCommandError(error: unknown): CommandError {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    "message" in error &&
+    "retryable" in error
+  ) {
+    const candidate = error as Record<string, unknown>;
+    return {
+      code: String(candidate.code),
+      message: String(candidate.message),
+      retryable: Boolean(candidate.retryable),
+    };
+  }
+  return {
+    code: "UNKNOWN",
+    message: String(error),
+    retryable: false,
+  };
+}
+
 const inTauri = () =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 

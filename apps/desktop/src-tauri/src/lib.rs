@@ -3,6 +3,7 @@ use lingbi_application::{
     Candidate, CreateProjectRequest, DocumentApplicationService, GenerationService,
     ProjectApplicationService, ProjectSessionSnapshot,
 };
+use lingbi_contracts::AppError;
 use lingbi_domain::{Document, Project};
 use lingbi_security::{MemorySecretStore, SecretStore, SecretString};
 use lingbi_writing::{GenerationManager, GenerationRequest, GenerationState};
@@ -47,12 +48,47 @@ impl From<CurrentSession> for SessionDto {
     }
 }
 
+#[derive(Serialize)]
+struct CommandErrorDto {
+    code: String,
+    message: String,
+    retryable: bool,
+}
+
+impl From<AppError> for CommandErrorDto {
+    fn from(error: AppError) -> Self {
+        Self {
+            code: format!("{:?}", error.code),
+            message: error.message,
+            retryable: error.retryable,
+        }
+    }
+}
+
+fn command_error(code: &str, message: impl Into<String>, retryable: bool) -> CommandErrorDto {
+    CommandErrorDto {
+        code: code.to_owned(),
+        message: message.into(),
+        retryable,
+    }
+}
+
+fn parse_uuid(value: &str) -> Result<Uuid, CommandErrorDto> {
+    Uuid::parse_str(value).map_err(|error| {
+        command_error(
+            "INVALID_UUID",
+            format!("invalid UUID: {value}: {error}"),
+            false,
+        )
+    })
+}
+
 #[tauri::command]
 async fn project_create(
     state: State<'_, DesktopState>,
     name: String,
     root: String,
-) -> Result<SessionDto, String> {
+) -> Result<SessionDto, CommandErrorDto> {
     let snapshot = state
         .project_service
         .create_project(CreateProjectRequest {
@@ -60,50 +96,55 @@ async fn project_create(
             root: root.clone().into(),
         })
         .await
-        .map_err(|error| error.message)?;
+        .map_err(CommandErrorDto::from)?;
     let documents = Arc::new(DocumentApplicationService::new(root.clone()));
     state
         .document_services
         .lock()
-        .map_err(|_| "document service lock".to_owned())?
+        .map_err(|_| command_error("LOCK_ERROR", "document service lock", false))?
         .insert(root.clone(), documents);
     let current = CurrentSession { root, snapshot };
     let dto = SessionDto::from(current.clone());
     *state
         .current
         .lock()
-        .map_err(|_| "session lock".to_owned())? = Some(current);
+        .map_err(|_| command_error("LOCK_ERROR", "session lock", false))? = Some(current);
     Ok(dto)
 }
 
 #[tauri::command]
-async fn project_open(state: State<'_, DesktopState>, root: String) -> Result<SessionDto, String> {
+async fn project_open(
+    state: State<'_, DesktopState>,
+    root: String,
+) -> Result<SessionDto, CommandErrorDto> {
     let snapshot = state
         .project_service
         .open_project(root.clone().into())
         .await
-        .map_err(|error| error.message)?;
+        .map_err(CommandErrorDto::from)?;
     let documents = Arc::new(DocumentApplicationService::new(root.clone()));
     state
         .document_services
         .lock()
-        .map_err(|_| "document service lock".to_owned())?
+        .map_err(|_| command_error("LOCK_ERROR", "document service lock", false))?
         .insert(root.clone(), documents);
     let current = CurrentSession { root, snapshot };
     let dto = SessionDto::from(current.clone());
     *state
         .current
         .lock()
-        .map_err(|_| "session lock".to_owned())? = Some(current);
+        .map_err(|_| command_error("LOCK_ERROR", "session lock", false))? = Some(current);
     Ok(dto)
 }
 
 #[tauri::command]
-async fn project_get_session(state: State<'_, DesktopState>) -> Result<Option<SessionDto>, String> {
+async fn project_get_session(
+    state: State<'_, DesktopState>,
+) -> Result<Option<SessionDto>, CommandErrorDto> {
     Ok(state
         .current
         .lock()
-        .map_err(|_| "session lock".to_owned())?
+        .map_err(|_| command_error("LOCK_ERROR", "session lock", false))?
         .clone()
         .map(SessionDto::from))
 }
@@ -114,28 +155,28 @@ async fn document_create(
     project_id: String,
     title: String,
     content: String,
-) -> Result<Document, String> {
+) -> Result<Document, CommandErrorDto> {
     let root = current_root(&state)?;
     let documents = document_service(&state, &root)?;
-    let project_id = Uuid::parse_str(&project_id).map_err(|error| error.to_string())?;
+    let project_id = parse_uuid(&project_id)?;
     documents
         .create_document(project_id, title, content)
         .await
-        .map_err(|error| error.message)
+        .map_err(CommandErrorDto::from)
 }
 
 #[tauri::command]
 async fn document_open(
     state: State<'_, DesktopState>,
     document_id: String,
-) -> Result<String, String> {
+) -> Result<String, CommandErrorDto> {
     let root = current_root(&state)?;
     let documents = document_service(&state, &root)?;
-    let document_id = Uuid::parse_str(&document_id).map_err(|error| error.to_string())?;
+    let document_id = parse_uuid(&document_id)?;
     documents
         .read_document(document_id)
         .await
-        .map_err(|error| error.message)
+        .map_err(CommandErrorDto::from)
 }
 
 #[tauri::command]
@@ -144,14 +185,14 @@ async fn document_save(
     document_id: String,
     expected_revision: u64,
     content: String,
-) -> Result<Document, String> {
+) -> Result<Document, CommandErrorDto> {
     let root = current_root(&state)?;
     let documents = document_service(&state, &root)?;
-    let document_id = Uuid::parse_str(&document_id).map_err(|error| error.to_string())?;
+    let document_id = parse_uuid(&document_id)?;
     documents
         .save_document(document_id, expected_revision, content)
         .await
-        .map_err(|error| error.message)
+        .map_err(CommandErrorDto::from)
 }
 
 #[derive(Serialize)]
@@ -165,12 +206,12 @@ async fn provider_configure(
     key: String,
     base_url: Option<String>,
     model: Option<String>,
-) -> Result<(), String> {
+) -> Result<(), CommandErrorDto> {
     state
         .secrets
         .put("provider_key", SecretString::new(key))
         .await
-        .map_err(|error| error.message)?;
+        .map_err(CommandErrorDto::from)?;
     state
         .secrets
         .put(
@@ -180,7 +221,7 @@ async fn provider_configure(
             ),
         )
         .await
-        .map_err(|error| error.message)?;
+        .map_err(CommandErrorDto::from)?;
     state
         .secrets
         .put(
@@ -188,16 +229,16 @@ async fn provider_configure(
             SecretString::new(model.unwrap_or_else(|| "gpt-4o-mini".to_owned())),
         )
         .await
-        .map_err(|error| error.message)
+        .map_err(CommandErrorDto::from)
 }
 
 #[tauri::command]
-async fn provider_test(state: State<'_, DesktopState>) -> Result<ProviderTestDto, String> {
+async fn provider_test(state: State<'_, DesktopState>) -> Result<ProviderTestDto, CommandErrorDto> {
     let configured = state
         .secrets
         .get("provider_key")
         .await
-        .map_err(|error| error.message)?
+        .map_err(CommandErrorDto::from)?
         .is_some();
     Ok(ProviderTestDto { configured })
 }
@@ -207,8 +248,8 @@ async fn generation_start(
     state: State<'_, DesktopState>,
     chapter_id: String,
     instruction: String,
-) -> Result<Candidate, String> {
-    let chapter_id = Uuid::parse_str(&chapter_id).map_err(|error| error.to_string())?;
+) -> Result<Candidate, CommandErrorDto> {
+    let chapter_id = parse_uuid(&chapter_id)?;
     let root = current_root(&state)?;
     let documents = document_service(&state, &root)?;
     let provider = configured_provider(&state).await?;
@@ -216,7 +257,7 @@ async fn generation_start(
     state
         .generation_services
         .lock()
-        .map_err(|_| "generation service lock".to_owned())?
+        .map_err(|_| command_error("LOCK_ERROR", "generation service lock", false))?
         .insert(root.clone(), service.clone());
     let task_id = state.generation.start_generation(GenerationRequest {
         chapter_id,
@@ -227,14 +268,14 @@ async fn generation_start(
             state
                 .generation
                 .complete_success(task_id)
-                .map_err(|error| error.message)?;
+                .map_err(CommandErrorDto::from)?;
             Ok(candidate)
         }
         Err(error) => {
             let _ = state
                 .generation
                 .complete_failure(task_id, AiError::InvalidResponse);
-            Err(error.message)
+            Err(error.into())
         }
     }
 }
@@ -243,11 +284,11 @@ async fn generation_start(
 async fn candidate_list(
     state: State<'_, DesktopState>,
     chapter_id: String,
-) -> Result<Vec<Candidate>, String> {
+) -> Result<Vec<Candidate>, CommandErrorDto> {
     let root = current_root(&state)?;
     let service = generation_service(&state, &root)?;
-    let chapter_id = Uuid::parse_str(&chapter_id).map_err(|error| error.to_string())?;
-    service.list(chapter_id).map_err(|error| error.message)
+    let chapter_id = parse_uuid(&chapter_id)?;
+    service.list(chapter_id).map_err(CommandErrorDto::from)
 }
 
 #[tauri::command]
@@ -255,102 +296,123 @@ async fn candidate_adopt(
     state: State<'_, DesktopState>,
     candidate_id: String,
     expected_revision: u64,
-) -> Result<Document, String> {
+) -> Result<Document, CommandErrorDto> {
     let root = current_root(&state)?;
     let service = generation_service(&state, &root)?;
-    let candidate_id = Uuid::parse_str(&candidate_id).map_err(|error| error.to_string())?;
+    let candidate_id = parse_uuid(&candidate_id)?;
     service
         .adopt(candidate_id, expected_revision)
         .await
-        .map_err(|error| error.message)
+        .map_err(CommandErrorDto::from)
 }
 
 #[tauri::command]
 async fn candidate_reject(
     state: State<'_, DesktopState>,
     candidate_id: String,
-) -> Result<(), String> {
+) -> Result<(), CommandErrorDto> {
     let root = current_root(&state)?;
     let service = generation_service(&state, &root)?;
-    let candidate_id = Uuid::parse_str(&candidate_id).map_err(|error| error.to_string())?;
-    service.reject(candidate_id).map_err(|error| error.message)
+    let candidate_id = parse_uuid(&candidate_id)?;
+    service.reject(candidate_id).map_err(CommandErrorDto::from)
 }
 
 #[tauri::command]
-async fn generation_cancel(state: State<'_, DesktopState>, task_id: String) -> Result<(), String> {
-    let task_id = Uuid::parse_str(&task_id).map_err(|error| error.to_string())?;
+async fn generation_cancel(
+    state: State<'_, DesktopState>,
+    task_id: String,
+) -> Result<(), CommandErrorDto> {
+    let task_id = parse_uuid(&task_id)?;
     state
         .generation
         .cancel_generation(task_id)
-        .map_err(|error| error.message)
+        .map_err(CommandErrorDto::from)
 }
 
 #[tauri::command]
 async fn generation_status(
     state: State<'_, DesktopState>,
     task_id: String,
-) -> Result<Option<GenerationState>, String> {
-    let task_id = Uuid::parse_str(&task_id).map_err(|error| error.to_string())?;
+) -> Result<Option<GenerationState>, CommandErrorDto> {
+    let task_id = parse_uuid(&task_id)?;
     Ok(state.generation.generation_status(task_id))
 }
 
-fn current_root(state: &State<'_, DesktopState>) -> Result<String, String> {
+fn current_root(state: &State<'_, DesktopState>) -> Result<String, CommandErrorDto> {
     state
         .current
         .lock()
-        .map_err(|_| "session lock".to_owned())?
+        .map_err(|_| command_error("LOCK_ERROR", "session lock", false))?
         .as_ref()
         .map(|session| session.root.clone())
-        .ok_or_else(|| "no project session".to_owned())
+        .ok_or_else(|| command_error("NO_PROJECT_SESSION", "no project session", false))
 }
 
 fn document_service(
     state: &State<'_, DesktopState>,
     root: &str,
-) -> Result<Arc<DocumentApplicationService>, String> {
+) -> Result<Arc<DocumentApplicationService>, CommandErrorDto> {
     state
         .document_services
         .lock()
-        .map_err(|_| "document service lock".to_owned())?
+        .map_err(|_| command_error("LOCK_ERROR", "document service lock", false))?
         .get(root)
         .cloned()
-        .ok_or_else(|| "document service not initialized".to_owned())
+        .ok_or_else(|| {
+            command_error(
+                "DOCUMENT_SERVICE_NOT_INITIALIZED",
+                "document service not initialized",
+                false,
+            )
+        })
 }
 
 fn generation_service(
     state: &State<'_, DesktopState>,
     root: &str,
-) -> Result<Arc<GenerationService>, String> {
+) -> Result<Arc<GenerationService>, CommandErrorDto> {
     state
         .generation_services
         .lock()
-        .map_err(|_| "generation service lock".to_owned())?
+        .map_err(|_| command_error("LOCK_ERROR", "generation service lock", false))?
         .get(root)
         .cloned()
-        .ok_or_else(|| "generation service not initialized".to_owned())
+        .ok_or_else(|| {
+            command_error(
+                "GENERATION_SERVICE_NOT_INITIALIZED",
+                "generation service not initialized",
+                false,
+            )
+        })
 }
 
 async fn configured_provider(
     state: &State<'_, DesktopState>,
-) -> Result<Arc<dyn lingbi_ai::AiProvider>, String> {
+) -> Result<Arc<dyn lingbi_ai::AiProvider>, CommandErrorDto> {
     let key = state
         .secrets
         .get("provider_key")
         .await
-        .map_err(|error| error.message)?
-        .ok_or_else(|| "provider key is not configured".to_owned())?;
+        .map_err(CommandErrorDto::from)?
+        .ok_or_else(|| {
+            command_error(
+                "PROVIDER_NOT_CONFIGURED",
+                "provider key is not configured",
+                false,
+            )
+        })?;
     let base_url = state
         .secrets
         .get("provider_base_url")
         .await
-        .map_err(|error| error.message)?
+        .map_err(CommandErrorDto::from)?
         .map(|value| value.expose().to_owned())
         .unwrap_or_else(|| "https://api.openai.com/v1/chat/completions".to_owned());
     let model = state
         .secrets
         .get("provider_model")
         .await
-        .map_err(|error| error.message)?
+        .map_err(CommandErrorDto::from)?
         .map(|value| value.expose().to_owned())
         .unwrap_or_else(|| "gpt-4o-mini".to_owned());
     Ok(Arc::new(OpenAiCompatibleProvider::new(
@@ -358,6 +420,30 @@ async fn configured_provider(
         base_url,
         model,
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lingbi_contracts::ErrorCode;
+
+    #[test]
+    fn app_error_maps_to_structured_command_error() {
+        let error = AppError::new(ErrorCode::DocumentConflict, "conflict".to_owned(), false);
+        let dto = CommandErrorDto::from(error);
+        assert_eq!(dto.code, "DocumentConflict");
+        assert_eq!(dto.message, "conflict");
+        assert!(!dto.retryable);
+    }
+
+    #[test]
+    fn command_error_serializes_structured_fields() {
+        let dto = command_error("INVALID_UUID", "bad id", false);
+        let json = serde_json::to_value(dto).expect("json");
+        assert_eq!(json["code"], "INVALID_UUID");
+        assert_eq!(json["message"], "bad id");
+        assert_eq!(json["retryable"], false);
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
