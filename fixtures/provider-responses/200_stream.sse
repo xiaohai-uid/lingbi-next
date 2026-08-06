@@ -1,0 +1,5 @@
+data: {"choices":[{"delta":{"content":"你好"}}]}
+
+data: {"choices":[{"delta":{"content":"世界"}}]}
+
+data: [DONE]
