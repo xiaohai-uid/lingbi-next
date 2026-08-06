@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/xiaohai-uid/lingbi-next/services/cloud/internal/auth"
+	"github.com/xiaohai-uid/lingbi-next/services/cloud/internal/billing"
 	"github.com/xiaohai-uid/lingbi-next/services/cloud/internal/entitlement"
 	"github.com/xiaohai-uid/lingbi-next/services/cloud/internal/releases"
 )
@@ -15,6 +16,7 @@ func New(
 	authService *auth.Service,
 	entitlementService *entitlement.Service,
 	releaseService *releases.Service,
+	checkoutService *billing.CheckoutService,
 ) http.Handler {
 	router := chi.NewRouter()
 	router.Get("/healthz", func(writer http.ResponseWriter, _ *http.Request) {
@@ -46,6 +48,8 @@ func New(
 	router.Get("/v1/releases/latest", releaseService.LatestHandler)
 	router.Get("/v1/releases/{version}", releaseService.ByVersionHandler)
 	router.Get("/v1/download/windows/x86_64", releaseService.WindowsDownloadHandler)
+	router.Post("/v1/checkout", checkoutService.CheckoutHandler)
+	router.Post("/v1/billing/webhook", checkoutService.WebhookHandler)
 	return router
 }
 

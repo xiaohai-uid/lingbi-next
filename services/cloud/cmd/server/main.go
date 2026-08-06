@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/xiaohai-uid/lingbi-next/services/cloud/internal/auth"
+	"github.com/xiaohai-uid/lingbi-next/services/cloud/internal/billing"
 	"github.com/xiaohai-uid/lingbi-next/services/cloud/internal/entitlement"
 	"github.com/xiaohai-uid/lingbi-next/services/cloud/internal/releases"
 	"github.com/xiaohai-uid/lingbi-next/services/cloud/internal/server"
@@ -25,10 +26,15 @@ func main() {
 			SHA256:      "placeholder",
 		},
 	))
+	checkoutService := billing.NewCheckoutService(
+		billing.SandboxProvider{},
+		billing.NewWebhookService(billing.NewMemoryEntitlementMutator()),
+	)
 	handler := server.New(
 		auth.NewService(),
 		entitlement.New(privateKey),
 		releaseService,
+		checkoutService,
 	)
 	if err := http.ListenAndServe(address, handler); err != nil {
 		log.Fatal(err)

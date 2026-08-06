@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/xiaohai-uid/lingbi-next/services/cloud/internal/auth"
+	"github.com/xiaohai-uid/lingbi-next/services/cloud/internal/billing"
 	"github.com/xiaohai-uid/lingbi-next/services/cloud/internal/entitlement"
 	"github.com/xiaohai-uid/lingbi-next/services/cloud/internal/releases"
 )
@@ -15,7 +16,7 @@ func TestHealthz(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	recorder := httptest.NewRecorder()
 
-	New(auth.NewService(), newEntitlement(), newReleases()).ServeHTTP(recorder, request)
+	New(auth.NewService(), newEntitlement(), newReleases(), newCheckout()).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("healthz status = %d, want %d", recorder.Code, http.StatusOK)
@@ -29,7 +30,7 @@ func TestReadyz(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	recorder := httptest.NewRecorder()
 
-	New(auth.NewService(), newEntitlement(), newReleases()).ServeHTTP(recorder, request)
+	New(auth.NewService(), newEntitlement(), newReleases(), newCheckout()).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("readyz status = %d, want %d", recorder.Code, http.StatusOK)
@@ -47,7 +48,7 @@ func TestEntitlementEndpoint(t *testing.T) {
 	request.Header.Set("Authorization", "Bearer "+accessToken)
 	recorder := httptest.NewRecorder()
 
-	New(authService, newEntitlement(), newReleases()).ServeHTTP(recorder, request)
+	New(authService, newEntitlement(), newReleases(), newCheckout()).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("entitlement status = %d, body = %s", recorder.Code, recorder.Body.String())
@@ -63,4 +64,11 @@ func newReleases() *releases.Service {
 	return releases.NewService(releases.NewMemoryStorage(
 		releases.Release{Version: "0.1.0"},
 	))
+}
+
+func newCheckout() *billing.CheckoutService {
+	return billing.NewCheckoutService(
+		billing.SandboxProvider{},
+		billing.NewWebhookService(billing.NewMemoryEntitlementMutator()),
+	)
 }
