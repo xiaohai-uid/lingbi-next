@@ -18,6 +18,7 @@ Date: 2026-08-06
 - Milestone 11: Tauri React desktop shell with application commands
 - Milestone 12: Deny-by-default Tauri capability boundary
 - Milestone 13 (shell): Welcome, project create/open, Markdown editor, save, and candidate panel scaffold
+- Milestone 14: REAL Desktop Golden Path E2E through production services
 
 ## Repositories
 
@@ -43,6 +44,9 @@ bea6604 feat(application): add revision-safe document CRUD
 305cc31 feat(desktop): bootstrap Tauri React shell with application commands
 392eb44 feat(desktop): enforce deny-by-default Tauri capabilities
 6b4d918 feat(desktop): add Golden Path shell UI tests
+2b85ff8 feat(application): add approval-gated generation and candidate adoption
+dd67c87 feat(desktop): wire generation and candidate commands
+04d0427 test(e2e): add REAL Desktop Golden Path
 ```
 
 ## Verification
@@ -62,6 +66,9 @@ PASS
 
 cd apps/desktop && pnpm tauri build --no-bundle
 PASS
+
+cargo test -p lingbi-e2e-desktop
+1 passed
 ```
 
 ## Flutter Milestone 0 verification
