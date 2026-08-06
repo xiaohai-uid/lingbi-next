@@ -1,7 +1,8 @@
-use lingbi_application::ProjectApplicationService;
+use lingbi_application::{DocumentApplicationService, ProjectApplicationService};
 use lingbi_contracts::AppError;
 use lingbi_domain::{Document, Project};
 use std::path::PathBuf;
+use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct RustProject {
@@ -92,6 +93,57 @@ pub fn project_v2_schema_version() -> u32 {
     2
 }
 
+pub async fn list_documents(root: String) -> Result<Vec<RustDocument>, RustAppError> {
+    let documents = DocumentApplicationService::new(PathBuf::from(root))
+        .list_documents()
+        .map_err(RustAppError::from)?;
+    Ok(documents.into_iter().map(Into::into).collect())
+}
+
+pub async fn read_document(root: String, document_id: String) -> Result<String, RustAppError> {
+    let document_id = parse_uuid(&document_id)?;
+    DocumentApplicationService::new(PathBuf::from(root))
+        .read_document(document_id)
+        .await
+        .map_err(RustAppError::from)
+}
+
+pub async fn create_document(
+    root: String,
+    project_id: String,
+    title: String,
+    content: String,
+) -> Result<RustDocument, RustAppError> {
+    let project_id = parse_uuid(&project_id)?;
+    let document = DocumentApplicationService::new(PathBuf::from(root))
+        .create_document(project_id, title, content)
+        .await
+        .map_err(RustAppError::from)?;
+    Ok(document.into())
+}
+
+pub async fn save_document(
+    root: String,
+    document_id: String,
+    expected_revision: u64,
+    content: String,
+) -> Result<RustDocument, RustAppError> {
+    let document_id = parse_uuid(&document_id)?;
+    let document = DocumentApplicationService::new(PathBuf::from(root))
+        .save_document(document_id, expected_revision, content)
+        .await
+        .map_err(RustAppError::from)?;
+    Ok(document.into())
+}
+
+fn parse_uuid(value: &str) -> Result<Uuid, RustAppError> {
+    Uuid::parse_str(value).map_err(|_| RustAppError {
+        code: "INVALID_UUID".to_owned(),
+        message: format!("invalid UUID: {value}"),
+        retryable: false,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,5 +172,53 @@ mod tests {
         assert_eq!(session.project.schema_version, 2);
         assert_eq!(session.current_document.title, "第一章");
         assert_eq!(session.current_document.revision, 0);
+    }
+
+    #[test]
+    fn document_storage_round_trip_uses_typed_rust_api() {
+        let temp = TempDir::new().expect("temp dir");
+        let root = temp.path().join("novel");
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let session = runtime.block_on(async {
+            let project = ProjectApplicationService::new()
+                .create_project(CreateProjectRequest {
+                    name: "文档测试".to_owned(),
+                    root: root.clone(),
+                })
+                .await
+                .expect("create project");
+
+            let created = create_document(
+                root.to_string_lossy().into_owned(),
+                project.project.id.to_string(),
+                "第二章".to_owned(),
+                "# 第二章\n\nRust storage.\n".to_owned(),
+            )
+            .await
+            .expect("create document");
+            let saved = save_document(
+                root.to_string_lossy().into_owned(),
+                created.id.clone(),
+                0,
+                "# 第二章\n\nRust storage updated.\n".to_owned(),
+            )
+            .await
+            .expect("save document");
+            let documents = list_documents(root.to_string_lossy().into_owned())
+                .await
+                .expect("list documents");
+
+            assert_eq!(saved.revision, 1);
+            assert_eq!(documents.len(), 2);
+            assert_eq!(
+                read_document(root.to_string_lossy().into_owned(), saved.id)
+                    .await
+                    .expect("read document"),
+                "# 第二章\n\nRust storage updated.\n"
+            );
+            project
+        });
+
+        assert_eq!(session.project.name, "文档测试");
     }
 }

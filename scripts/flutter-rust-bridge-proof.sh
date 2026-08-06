@@ -11,4 +11,4 @@ dll_path="$flutter_root/build/windows/x64/plugins/lingbi_ffi/Release/lingbi_ffi.
 cmd.exe /d /s /c "cd /d $flutter_windows && set LINGBI_RUST_CRATE_DIR=$rust_crate_windows&& C:\\Flutter\\flutter\\bin\\flutter.bat build windows --release"
 
 windows_dll="$(wslpath -m "$dll_path")"
-cmd.exe /d /s /c "cd /d $flutter_windows && C:\\Flutter\\flutter\\bin\\flutter.bat test test/rust_ffi_project_parser_test.dart --dart-define=LINGBI_FFI_DLL=$windows_dll --concurrency=1"
+cmd.exe /d /s /c "cd /d $flutter_windows && C:\\Flutter\\flutter\\bin\\flutter.bat test test/rust_ffi_project_parser_test.dart test/rust_ffi_document_storage_test.dart --dart-define=LINGBI_FFI_DLL=$windows_dll --concurrency=1"

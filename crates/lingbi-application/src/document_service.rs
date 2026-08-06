@@ -66,6 +66,12 @@ impl DocumentApplicationService {
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
+    pub fn list_documents(&self) -> Result<Vec<Document>, AppError> {
+        let mut documents = self.read_index()?;
+        documents.sort_by_key(|document| document.order);
+        Ok(documents)
+    }
+
     pub async fn save_document(
         &self,
         document_id: Uuid,
@@ -193,5 +199,27 @@ mod tests {
             service.read_document(created.id).await.expect("read"),
             "original"
         );
+    }
+
+    #[tokio::test]
+    async fn list_documents_returns_documents_in_order() {
+        let temp = TempDir::new().expect("temp dir");
+        let service = DocumentApplicationService::new(temp.path().join("project"));
+        let project_id = Uuid::new_v4();
+
+        service
+            .create_document(project_id, "第一章", "first")
+            .await
+            .expect("create first");
+        service
+            .create_document(project_id, "第二章", "second")
+            .await
+            .expect("create second");
+
+        let documents = service.list_documents().expect("list");
+
+        assert_eq!(documents.len(), 2);
+        assert_eq!(documents[0].order, 0);
+        assert_eq!(documents[1].order, 1);
     }
 }
