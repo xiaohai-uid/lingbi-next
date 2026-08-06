@@ -34,7 +34,7 @@ Date: 2026-08-06
 - Milestone 27: Signing policy for code, updater, and entitlement trust roots
 - Commercial readiness audit: Public Beta classification and external gate list
 - Milestone 29: shared Project V2 fixture compatibility, including Rust edit and Flutter reopen proof
-- Milestone 30 partial: Project V2 C ABI bridge in lingbi-ffi
+- Milestone 30 partial: Project V2 C ABI bridge plus flutter_rust_bridge project parsing with Cargokit Windows bundling
 
 ## Repositories
 
@@ -79,6 +79,7 @@ acffc10 feat(security): add privacy baseline allow/deny policy
 324ce20 test(project): add shared Project V2 fixture compatibility
 684f7dd feat(ffi): add Project V2 C ABI bridge
 c96e80d test(project): add Rust edit helper for cross-platform V2 proof
+c298fae feat(ffi): add flutter_rust_bridge Project V2 API
 ```
 
 Flutter branch commits:
@@ -86,6 +87,7 @@ Flutter branch commits:
 ```text
 c23ccc0 fix(test): skip transient live provider failures
 092a6b1 test(project): add Rust-to-Flutter V2 reopen proof
+46d0724 feat(ffi): wire flutter_rust_bridge Project V2 parsing
 ```
 
 ## Verification
@@ -146,7 +148,7 @@ No issues found
 flutter test --exclude-tags network --concurrency=1
 1524 passed
 0 failed
-1 skipped (cross-platform test without Rust-generated fixture)
+2 skipped (fixture/FFI acceptance tests without generated artifacts)
 
 flutter build windows --release
 PASS
@@ -163,8 +165,16 @@ scripts/cross-platform-v2-proof.sh
 PASS
 ```
 
+flutter_rust_bridge proof:
+
+```text
+scripts/flutter-rust-bridge-proof.sh
+PASS
+```
+
 ## Next
 
-Continue Milestone 30: migrate Rust Core into Flutter through
-`lingbi-ffi`/flutter_rust_bridge. After that, finish PDF export, DOCX import,
-updater integration, and the external Commercial GA gates.
+Continue Milestone 30: migrate document storage, mutation, recovery, AI
+provider, generation, and import/export through `lingbi-ffi`/flutter_rust_bridge.
+After that, finish PDF export, DOCX import, updater integration, and the
+external Commercial GA gates.
