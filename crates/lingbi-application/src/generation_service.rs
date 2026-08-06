@@ -10,10 +10,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::MutationCoordinator;
+
 pub struct GenerationService {
     provider: Arc<dyn AiProvider>,
     documents: Arc<DocumentApplicationService>,
     candidates: CandidateRepository,
+    coordinator: MutationCoordinator,
 }
 
 impl GenerationService {
@@ -25,8 +28,9 @@ impl GenerationService {
         let root = root.into();
         Self {
             provider,
-            documents,
-            candidates: CandidateRepository::new(root),
+            documents: documents.clone(),
+            candidates: CandidateRepository::new(root.clone()),
+            coordinator: MutationCoordinator::new(root, documents.clone()),
         }
     }
 
@@ -105,39 +109,7 @@ impl GenerationService {
         candidate_id: Uuid,
         _expected_revision: u64,
     ) -> Result<Document, AppError> {
-        let mut candidate = self.read_candidate(candidate_id)?;
-        if candidate.status != CandidateStatus::Pending {
-            return Err(AppError::new(
-                ErrorCode::MutationNotApproved,
-                "candidate is not pending".to_owned(),
-                false,
-            ));
-        }
-        let current = self.documents.get_document(candidate.document_id)?;
-        if current.revision != candidate.base_revision
-            || !current
-                .content_hash
-                .eq_ignore_ascii_case(&candidate.base_content_hash)
-        {
-            candidate.mark_stale();
-            self.write_candidate(&candidate)?;
-            return Err(AppError::new(
-                ErrorCode::CandidateStale,
-                "candidate is stale".to_owned(),
-                false,
-            ));
-        }
-
-        let document = self
-            .documents
-            .save_document(
-                candidate.document_id,
-                current.revision,
-                candidate.content.clone(),
-            )
-            .await?;
-        candidate.commit();
-        self.write_candidate(&candidate)?;
+        let (document, _receipt) = self.coordinator.approve_and_commit(candidate_id).await?;
         Ok(document)
     }
 
@@ -266,6 +238,12 @@ mod tests {
         let adopted = generation.adopt(candidate.id, 0).await.expect("adopt");
 
         assert_eq!(adopted.revision, 1);
+        assert!(
+            temp.path()
+                .join("novel/.lingbi/receipts")
+                .join(format!("{}.json", candidate.id))
+                .exists()
+        );
         assert_eq!(
             documents
                 .read_document(snapshot.current_document.id)

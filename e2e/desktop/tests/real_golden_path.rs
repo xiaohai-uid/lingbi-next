@@ -38,6 +38,11 @@ async fn real_desktop_golden_path() {
         .await
         .expect("adopt candidate");
     assert_eq!(adopted.revision, 1);
+    assert!(
+        root.join(".lingbi/receipts")
+            .join(format!("{}.json", candidate.id))
+            .exists()
+    );
     assert_eq!(
         documents
             .read_document(created.current_document.id)

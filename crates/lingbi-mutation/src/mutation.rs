@@ -37,6 +37,63 @@ pub struct CommitReceipt {
     pub committed_at: chrono::DateTime<chrono::Utc>,
 }
 
+pub struct ReceiptRepository {
+    root: PathBuf,
+    store: DiskAtomicFileStore,
+}
+
+impl ReceiptRepository {
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self {
+            root: root.into(),
+            store: DiskAtomicFileStore,
+        }
+    }
+
+    pub fn write(&self, receipt: &CommitReceipt) -> Result<(), AppError> {
+        let path = self.receipt_path(receipt.candidate_id);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(io_error)?;
+        }
+        let bytes = serde_json::to_vec(receipt).map_err(parse_error)?;
+        self.store.write_atomic(&path, &bytes, None)?;
+        Ok(())
+    }
+
+    pub fn read(&self, candidate_id: Uuid) -> Result<Option<CommitReceipt>, AppError> {
+        let path = self.receipt_path(candidate_id);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let bytes = std::fs::read(&path).map_err(io_error)?;
+        serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(parse_error)
+    }
+
+    fn receipt_path(&self, candidate_id: Uuid) -> PathBuf {
+        self.root
+            .join(".lingbi/receipts")
+            .join(format!("{candidate_id}.json"))
+    }
+}
+
+fn io_error(error: std::io::Error) -> AppError {
+    AppError::new(
+        ErrorCode::ProjectCorrupted,
+        format!("mutation persistence failed: {error}"),
+        false,
+    )
+}
+
+fn parse_error(error: serde_json::Error) -> AppError {
+    AppError::new(
+        ErrorCode::ProjectCorrupted,
+        format!("mutation metadata parse failed: {error}"),
+        false,
+    )
+}
+
 pub struct MutationEngine {
     root: PathBuf,
     guard: ProjectPathGuard,

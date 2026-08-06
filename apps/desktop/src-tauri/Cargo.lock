@@ -1836,6 +1836,7 @@ dependencies = [
  "lingbi-security",
  "lingbi-storage",
  "serde",
+ "serde_json",
  "sha2",
  "uuid",
 ]
