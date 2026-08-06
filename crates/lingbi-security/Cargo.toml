@@ -4,3 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+lingbi-contracts = { path = "../lingbi-contracts" }
+
+[dev-dependencies]
+tempfile = "3"
