@@ -97,12 +97,7 @@ fn create_session(base: &str, binary: &Path) -> WebDriver {
     WebDriver::new(base.to_owned(), session)
 }
 
-fn wait_until(
-    driver: &WebDriver,
-    script: &str,
-    timeout: Duration,
-    ready: &str,
-) -> Value {
+fn wait_until(driver: &WebDriver, script: &str, timeout: Duration, ready: &str) -> Value {
     let started = Instant::now();
     loop {
         let value = driver.execute(script);
@@ -211,9 +206,8 @@ fn session_state(driver: &WebDriver) -> Value {
         "#;
     let value = driver.execute_async(script, vec![]);
     let serialized = value.as_str().expect("session state string");
-    serde_json::from_str(serialized).unwrap_or_else(|error| {
-        panic!("session state json: {error}: {serialized}")
-    })
+    serde_json::from_str(serialized)
+        .unwrap_or_else(|error| panic!("session state json: {error}: {serialized}"))
 }
 
 fn chapter_state(driver: &WebDriver, title: &str) -> Value {
@@ -235,9 +229,8 @@ fn chapter_state(driver: &WebDriver, title: &str) -> Value {
     );
     let value = driver.execute_async(&script, vec![]);
     let serialized = value.as_str().expect("chapter state string");
-    serde_json::from_str(serialized).unwrap_or_else(|error| {
-        panic!("chapter state json: {error}: {serialized}")
-    })
+    serde_json::from_str(serialized)
+        .unwrap_or_else(|error| panic!("chapter state json: {error}: {serialized}"))
 }
 
 fn start_sse_server() -> String {
@@ -260,11 +253,15 @@ fn handle_sse(stream: &mut TcpStream) -> std::io::Result<()> {
             break;
         }
         read += count;
-        if buffer[..read].windows(4).any(|window| window == b"\r\n\r\n") {
+        if buffer[..read]
+            .windows(4)
+            .any(|window| window == b"\r\n\r\n")
+        {
             break;
         }
     }
-    let body = "data: {\"choices\":[{\"delta\":{\"content\":\"E2E候选正文\"}}]}\n\ndata: [DONE]\n\n";
+    let body =
+        "data: {\"choices\":[{\"delta\":{\"content\":\"E2E候选正文\"}}]}\n\ndata: [DONE]\n\n";
     write!(
         stream,
         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -282,6 +279,7 @@ fn repo_root() -> PathBuf {
 }
 
 #[test]
+#[ignore = "requires release Tauri binary, Xvfb, tauri-driver, and WebKitWebDriver; run with --ignored"]
 fn real_tauri_release_binary_e2e() {
     let repo = repo_root();
     let binary = repo.join("apps/desktop/src-tauri/target/release/lingbi-desktop");
@@ -370,7 +368,10 @@ fn real_tauri_release_binary_e2e() {
     let state = session_state(&first);
     assert_eq!(state["documents"].as_array().expect("documents").len(), 2);
     assert!(
-        state["content"].as_str().expect("content").contains("E2E候选正文"),
+        state["content"]
+            .as_str()
+            .expect("content")
+            .contains("E2E候选正文"),
         "adopted content: {}",
         state["content"]
     );

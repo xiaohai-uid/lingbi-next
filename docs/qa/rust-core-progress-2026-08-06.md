@@ -133,8 +133,8 @@ PASS
 cargo test -p lingbi-e2e-desktop
 1 passed
 
-cargo test -p lingbi-e2e-desktop --test real_desktop_binary_e2e
-1 passed (real Tauri release binary, TCP-only Xvfb)
+cargo test -p lingbi-e2e-desktop --test real_desktop_binary_e2e -- --ignored
+1 passed (real Tauri release binary, TCP-only Xvfb; opt-in so the CI gate does not need a desktop session)
 
 cargo test --workspace --lib
 all tests pass
