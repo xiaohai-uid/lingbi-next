@@ -11,6 +11,8 @@ lingbi-domain = { path = "../../crates/lingbi-domain" }
 lingbi-mutation = { path = "../../crates/lingbi-mutation" }
 lingbi-recovery = { path = "../../crates/lingbi-recovery" }
 lingbi-storage = { path = "../../crates/lingbi-storage" }
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+serde_json = "1"
 sha2 = "0.10"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

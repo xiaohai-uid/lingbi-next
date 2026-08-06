@@ -192,10 +192,12 @@ async fn document_create(
     let root = current_root(&state)?;
     let documents = document_service(&state, &root)?;
     let project_id = parse_uuid(&project_id)?;
-    documents
+    let document = documents
         .create_document(project_id, title, content)
         .await
-        .map_err(CommandErrorDto::from)
+        .map_err(CommandErrorDto::from)?;
+    set_current_document(&state, document.clone())?;
+    Ok(document)
 }
 
 #[tauri::command]
@@ -206,10 +208,15 @@ async fn document_open(
     let root = current_root(&state)?;
     let documents = document_service(&state, &root)?;
     let document_id = parse_uuid(&document_id)?;
-    documents
+    let content = documents
         .read_document(document_id)
         .await
-        .map_err(CommandErrorDto::from)
+        .map_err(CommandErrorDto::from)?;
+    let document = documents
+        .get_document(document_id)
+        .map_err(CommandErrorDto::from)?;
+    set_current_document(&state, document)?;
+    Ok(content)
 }
 
 #[tauri::command]
@@ -222,10 +229,12 @@ async fn document_save(
     let root = current_root(&state)?;
     let documents = document_service(&state, &root)?;
     let document_id = parse_uuid(&document_id)?;
-    documents
+    let document = documents
         .save_document(document_id, expected_revision, content)
         .await
-        .map_err(CommandErrorDto::from)
+        .map_err(CommandErrorDto::from)?;
+    set_current_document(&state, document.clone())?;
+    Ok(document)
 }
 
 #[derive(Serialize)]
@@ -383,10 +392,12 @@ async fn candidate_adopt(
     let root = current_root(&state)?;
     let service = generation_service(&state, &root)?;
     let candidate_id = parse_uuid(&candidate_id)?;
-    service
+    let document = service
         .adopt(candidate_id, expected_revision)
         .await
-        .map_err(CommandErrorDto::from)
+        .map_err(CommandErrorDto::from)?;
+    set_current_document(&state, document.clone())?;
+    Ok(document)
 }
 
 #[tauri::command]
@@ -437,6 +448,20 @@ fn current_root(state: &State<'_, DesktopState>) -> Result<String, CommandErrorD
         .as_ref()
         .map(|session| session.root.clone())
         .ok_or_else(|| command_error("NO_PROJECT_SESSION", "no project session", false))
+}
+
+fn set_current_document(
+    state: &State<'_, DesktopState>,
+    document: Document,
+) -> Result<(), CommandErrorDto> {
+    let mut current = state
+        .current
+        .lock()
+        .map_err(|_| command_error("LOCK_ERROR", "session lock", false))?;
+    if let Some(session) = current.as_mut() {
+        session.snapshot.current_document = document;
+    }
+    Ok(())
 }
 
 fn document_service(

@@ -92,19 +92,18 @@ async function generateStreaming(
   instruction: string,
   onStart?: (taskId: string) => void,
 ): Promise<GeneratedCandidate> {
-  const started = await invoke<{ task_id: string }>("generation_start", {
-    chapterId,
-    instruction,
-  });
-  const taskId = started.task_id;
-  onStart?.(taskId);
   return new Promise<GeneratedCandidate>((resolve, reject) => {
     let unlisten: (() => void) | undefined;
+    let taskId: string | null = null;
     const cleanup = () => {
-      if (unlisten) unlisten();
+      unlisten?.();
     };
     listen<GenerationEvent>("generation-event", (event) => {
-      if (event.payload.task_id !== taskId) return;
+      if (taskId === null) {
+        taskId = event.payload.task_id;
+      } else if (event.payload.task_id !== taskId) {
+        return;
+      }
       if (event.payload.type === "candidate" && event.payload.candidate) {
         cleanup();
         resolve(event.payload.candidate);
@@ -116,10 +115,19 @@ async function generateStreaming(
         reject(toCommandError({ code: "AI_CANCELLED", message: "AI generation cancelled", retryable: false }));
       }
     })
-      .then((unlistenFn) => {
+      .then(async (unlistenFn) => {
         unlisten = unlistenFn;
+        const started = await invoke<{ task_id: string }>("generation_start", {
+          chapterId,
+          instruction,
+        });
+        taskId = started.task_id;
+        onStart?.(taskId);
       })
-      .catch(reject);
+      .catch((error) => {
+        cleanup();
+        reject(error);
+      });
   });
 }
 
