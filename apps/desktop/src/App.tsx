@@ -48,6 +48,7 @@ function Editor() {
   const error = useAppStore((state) => state.error);
   const saveDocument = useAppStore((state) => state.saveDocument);
   const generate = useAppStore((state) => state.generate);
+  const cancelGeneration = useAppStore((state) => state.cancelGeneration);
   const adoptCandidate = useAppStore((state) => state.adoptCandidate);
   const rejectCandidate = useAppStore((state) => state.rejectCandidate);
   const selectDocument = useAppStore((state) => state.selectDocument);
@@ -88,6 +89,7 @@ function Editor() {
           <button disabled={generating} onClick={() => generate(instruction)}>
             {generating ? "生成中" : "生成"}
           </button>
+          {generating ? <button onClick={cancelGeneration}>停止</button> : null}
           {error ? <span className="error">{error}</span> : null}
         </footer>
       </section>

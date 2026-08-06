@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 export interface Project {
   id: string;
@@ -49,6 +50,14 @@ export interface CommandError {
   retryable: boolean;
 }
 
+export interface GenerationEvent {
+  type: "delta" | "candidate" | "error" | "cancelled";
+  task_id: string;
+  content?: string;
+  candidate?: GeneratedCandidate;
+  error?: CommandError;
+}
+
 export function toCommandError(error: unknown): CommandError {
   if (
     typeof error === "object" &&
@@ -75,6 +84,42 @@ const inTauri = () =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 const mockSessions = new Map<string, Session>();
+
+async function generateStreaming(
+  chapterId: string,
+  instruction: string,
+  onStart?: (taskId: string) => void,
+): Promise<GeneratedCandidate> {
+  const started = await invoke<{ task_id: string }>("generation_start", {
+    chapterId,
+    instruction,
+  });
+  const taskId = started.task_id;
+  onStart?.(taskId);
+  return new Promise<GeneratedCandidate>((resolve, reject) => {
+    let unlisten: (() => void) | undefined;
+    const cleanup = () => {
+      if (unlisten) unlisten();
+    };
+    listen<GenerationEvent>("generation-event", (event) => {
+      if (event.payload.task_id !== taskId) return;
+      if (event.payload.type === "candidate" && event.payload.candidate) {
+        cleanup();
+        resolve(event.payload.candidate);
+      } else if (event.payload.type === "error" && event.payload.error) {
+        cleanup();
+        reject(event.payload.error);
+      } else if (event.payload.type === "cancelled") {
+        cleanup();
+        reject(toCommandError({ code: "AI_CANCELLED", message: "AI generation cancelled", retryable: false }));
+      }
+    })
+      .then((unlistenFn) => {
+        unlisten = unlistenFn;
+      })
+      .catch(reject);
+  });
+}
 
 export const desktop = {
   async createProject(name: string, root: string): Promise<Session> {
@@ -183,13 +228,12 @@ export const desktop = {
   async generate(
     chapterId: string,
     instruction: string,
+    onStart?: (taskId: string) => void,
   ): Promise<GeneratedCandidate> {
     if (inTauri()) {
-      return invoke<GeneratedCandidate>("generation_start", {
-        chapterId,
-        instruction,
-      });
+      return generateStreaming(chapterId, instruction, onStart);
     }
+    onStart?.("browser-mock-task");
     return {
       id: crypto.randomUUID(),
       project_id: crypto.randomUUID(),
@@ -206,6 +250,12 @@ export const desktop = {
       approved_at: null,
       committed_at: null,
     };
+  },
+
+  async generationCancel(taskId: string): Promise<void> {
+    if (inTauri()) {
+      await invoke("generation_cancel", { taskId });
+    }
   },
 
   async candidateList(chapterId: string): Promise<GeneratedCandidate[]> {

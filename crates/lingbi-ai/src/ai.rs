@@ -4,8 +4,11 @@ use futures_core::Stream;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use thiserror::Error;
+use tokio::sync::Notify;
 
 pub type AiStream = Pin<Box<dyn Stream<Item = Result<AiEvent, AiError>> + Send>>;
 
@@ -61,6 +64,8 @@ pub enum AiError {
     Server(u16),
     #[error("invalid provider response")]
     InvalidResponse,
+    #[error("cancelled")]
+    Cancelled,
 }
 
 impl AiError {
@@ -70,6 +75,33 @@ impl AiError {
             429 => Self::RateLimited,
             status if status >= 500 => Self::Server(status),
             _ => Self::InvalidResponse,
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct CancellationToken {
+    cancelled: Arc<AtomicBool>,
+    notify: Arc<Notify>,
+}
+
+impl CancellationToken {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+        self.notify.notify_waiters();
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+
+    pub async fn cancelled(&self) {
+        if !self.is_cancelled() {
+            self.notify.notified().await;
         }
     }
 }
@@ -120,6 +152,14 @@ pub trait AiProvider: Send + Sync {
 
     fn model_id(&self) -> &str;
 
+    fn stream_chat_with_cancel(
+        &self,
+        request: ChatRequest,
+        _cancel: CancellationToken,
+    ) -> AiStream {
+        self.stream_chat(request)
+    }
+
     fn stream_chat(&self, request: ChatRequest) -> AiStream;
 }
 
@@ -161,6 +201,99 @@ impl AiProvider for OpenAiCompatibleProvider {
 
     fn model_id(&self) -> &str {
         &self.model
+    }
+
+    fn stream_chat_with_cancel(&self, request: ChatRequest, cancel: CancellationToken) -> AiStream {
+        let client = self.client.clone();
+        let base_url = self.base_url.clone();
+        let model = self.model.clone();
+        let api_key = self.api_key.clone().unwrap_or_default();
+
+        Box::pin(stream! {
+            if api_key.is_empty() {
+                yield Err(AiError::NoApiKey);
+                return;
+            }
+            let body = serde_json::json!({
+                "model": model,
+                "messages": request.messages,
+                "temperature": request.temperature,
+                "max_tokens": request.max_tokens,
+                "stream": true,
+            });
+            let response = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => {
+                    yield Err(AiError::Cancelled);
+                    return;
+                }
+                result = client.post(&base_url).bearer_auth(&api_key).json(&body).send() => {
+                    match result {
+                        Ok(response) => response,
+                        Err(error) if error.is_timeout() => {
+                            yield Err(AiError::Timeout);
+                            return;
+                        }
+                        Err(_) => {
+                            yield Err(AiError::Network);
+                            return;
+                        }
+                    }
+                }
+            };
+            let status = response.status().as_u16();
+            if !response.status().is_success() {
+                yield Err(AiError::from_status(status));
+                return;
+            }
+
+            let mut stream = response.bytes_stream();
+            let mut pending = String::new();
+            while let Some(chunk) = stream.next().await {
+                if cancel.is_cancelled() {
+                    yield Err(AiError::Cancelled);
+                    return;
+                }
+                let chunk = match chunk {
+                    Ok(chunk) => chunk,
+                    Err(_) => {
+                        yield Err(AiError::Network);
+                        return;
+                    }
+                };
+                pending.push_str(&String::from_utf8_lossy(&chunk));
+                let lines: Vec<String> = pending.split('\n').map(str::to_owned).collect();
+                pending = lines.last().cloned().unwrap_or_default().to_owned();
+                for line in lines.iter().take(lines.len().saturating_sub(1)) {
+                    let line = line.trim();
+                    if !line.starts_with("data: ") {
+                        continue;
+                    }
+                    let data = line.trim_start_matches("data: ").trim();
+                    if data == "[DONE]" {
+                        yield Ok(AiEvent::Completed);
+                        return;
+                    }
+                    let value: serde_json::Value = match serde_json::from_str(data) {
+                        Ok(value) => value,
+                        Err(_) => {
+                            yield Err(AiError::InvalidResponse);
+                            return;
+                        }
+                    };
+                    let Some(content) = value
+                        .pointer("/choices/0/delta/content")
+                        .and_then(|value| value.as_str())
+                    else {
+                        continue;
+                    };
+                    if !content.is_empty() {
+                        yield Ok(AiEvent::ContentDelta(content.to_owned()));
+                    }
+                }
+            }
+            yield Ok(AiEvent::Completed);
+        })
     }
 
     fn stream_chat(&self, request: ChatRequest) -> AiStream {
@@ -496,5 +629,14 @@ mod tests {
 
         assert!(!health.ok);
         assert!(health.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn cancellation_token_cancels_waiters() {
+        let token = CancellationToken::new();
+        assert!(!token.is_cancelled());
+        token.cancel();
+        assert!(token.is_cancelled());
+        token.cancelled().await;
     }
 }

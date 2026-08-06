@@ -27,6 +27,7 @@ describe("LingBi Next desktop shell", () => {
       documentContent: "",
       candidate: null,
       generating: false,
+      generationTaskId: null,
       status: "",
       error: null,
       selectedTab: "welcome",

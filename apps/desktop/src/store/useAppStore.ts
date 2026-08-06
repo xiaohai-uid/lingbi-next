@@ -12,6 +12,7 @@ interface AppStore {
   documentContent: string;
   candidate: GeneratedCandidate | null;
   generating: boolean;
+  generationTaskId: string | null;
   status: string;
   error: string | null;
   selectedTab: "welcome" | "editor";
@@ -20,6 +21,7 @@ interface AppStore {
   saveDocument: () => Promise<void>;
   selectDocument: (document: Document) => Promise<void>;
   generate: (instruction: string) => Promise<void>;
+  cancelGeneration: () => Promise<void>;
   adoptCandidate: () => Promise<void>;
   rejectCandidate: () => Promise<void>;
 }
@@ -29,6 +31,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   documentContent: "",
   candidate: null,
   generating: false,
+  generationTaskId: null,
   status: "",
   error: null,
   selectedTab: "welcome",
@@ -96,19 +99,37 @@ export const useAppStore = create<AppStore>((set, get) => ({
   async generate(instruction) {
     const session = get().session;
     if (!session) return;
-    set({ generating: true, error: null, status: "生成中..." });
+    set({ generating: true, error: null, status: "生成中...", generationTaskId: null });
     try {
       const candidate = await desktop.generate(
         session.current_document.id,
         instruction,
+        (taskId) => useAppStore.setState({ generationTaskId: taskId }),
       );
       set({
         candidate,
         generating: false,
+        generationTaskId: null,
         status: "候选已生成",
       });
     } catch (error) {
-      set({ generating: false, error: toCommandError(error).message, status: "" });
+      set({
+        generating: false,
+        generationTaskId: null,
+        error: toCommandError(error).message,
+        status: "",
+      });
+    }
+  },
+
+  async cancelGeneration() {
+    const taskId = get().generationTaskId;
+    if (!taskId) return;
+    try {
+      await desktop.generationCancel(taskId);
+      set({ generating: false, generationTaskId: null, status: "已取消" });
+    } catch (error) {
+      set({ error: toCommandError(error).message, status: "" });
     }
   },
 

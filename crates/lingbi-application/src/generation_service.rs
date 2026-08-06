@@ -1,13 +1,14 @@
 use crate::DocumentApplicationService;
 use chrono::Utc;
 use futures_util::StreamExt;
-use lingbi_ai::{AiEvent, AiProvider, ChatMessage, ChatRequest};
+use lingbi_ai::{AiEvent, AiProvider, CancellationToken, ChatMessage, ChatRequest};
 use lingbi_contracts::{AppError, ErrorCode};
 use lingbi_domain::{Candidate, CandidateStatus, Document};
 use lingbi_storage::CandidateRepository;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::mpsc::UnboundedSender;
 use uuid::Uuid;
 
 use crate::MutationCoordinator;
@@ -39,6 +40,18 @@ impl GenerationService {
         chapter_id: Uuid,
         instruction: impl Into<String>,
     ) -> Result<Candidate, AppError> {
+        let (_deltas, _) = tokio::sync::mpsc::unbounded_channel();
+        self.generate_with_cancel_stream(chapter_id, instruction, CancellationToken::new(), _deltas)
+            .await
+    }
+
+    pub async fn generate_with_cancel_stream(
+        &self,
+        chapter_id: Uuid,
+        instruction: impl Into<String>,
+        cancel: CancellationToken,
+        deltas: UnboundedSender<String>,
+    ) -> Result<Candidate, AppError> {
         let document = self.documents.get_document(chapter_id)?;
         let instruction = instruction.into();
         let request = ChatRequest {
@@ -56,11 +69,14 @@ impl GenerationService {
             max_tokens: 2048,
         };
 
-        let mut stream = self.provider.stream_chat(request);
+        let mut stream = self.provider.stream_chat_with_cancel(request, cancel);
         let mut content = String::new();
         while let Some(event) = stream.next().await {
             match event.map_err(ai_error)? {
-                AiEvent::ContentDelta(delta) => content.push_str(&delta),
+                AiEvent::ContentDelta(delta) => {
+                    let _ = deltas.send(delta.clone());
+                    content.push_str(&delta);
+                }
                 AiEvent::Completed => break,
                 _ => {}
             }
@@ -143,6 +159,7 @@ fn ai_error(error: lingbi_ai::AiError) -> AppError {
         lingbi_ai::AiError::Network => (ErrorCode::AiNetworkError, true),
         lingbi_ai::AiError::Server(_) => (ErrorCode::AiServerError, true),
         lingbi_ai::AiError::InvalidResponse => (ErrorCode::AiInvalidResponse, false),
+        lingbi_ai::AiError::Cancelled => (ErrorCode::AiCancelled, false),
     };
     AppError::new(code, error.to_string(), retryable)
 }

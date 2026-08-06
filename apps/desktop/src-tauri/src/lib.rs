@@ -1,4 +1,4 @@
-use lingbi_ai::{AiError, OpenAiCompatibleProvider};
+use lingbi_ai::{AiError, CancellationToken, OpenAiCompatibleProvider};
 use lingbi_application::{
     Candidate, CreateProjectRequest, DocumentApplicationService, GenerationService,
     ProjectApplicationService, ProjectSessionSnapshot,
@@ -10,7 +10,7 @@ use lingbi_writing::{GenerationManager, GenerationRequest, GenerationState};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tauri::State;
+use tauri::{Emitter, Manager, State};
 use uuid::Uuid;
 
 #[derive(Default)]
@@ -21,6 +21,7 @@ struct DesktopState {
     secrets: KeyringSecretStore,
     generation: GenerationManager,
     generation_services: Mutex<HashMap<String, Arc<GenerationService>>>,
+    generation_tokens: Mutex<HashMap<Uuid, CancellationToken>>,
 }
 
 #[derive(Clone)]
@@ -48,7 +49,7 @@ impl From<CurrentSession> for SessionDto {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct CommandErrorDto {
     code: String,
     message: String,
@@ -81,6 +82,31 @@ fn parse_uuid(value: &str) -> Result<Uuid, CommandErrorDto> {
             false,
         )
     })
+}
+
+#[derive(Serialize)]
+struct GenerationStartDto {
+    task_id: Uuid,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum GenerationEventDto {
+    Delta {
+        task_id: Uuid,
+        content: String,
+    },
+    Candidate {
+        task_id: Uuid,
+        candidate: Candidate,
+    },
+    Error {
+        task_id: Uuid,
+        error: CommandErrorDto,
+    },
+    Cancelled {
+        task_id: Uuid,
+    },
 }
 
 #[tauri::command]
@@ -251,10 +277,11 @@ async fn provider_test(state: State<'_, DesktopState>) -> Result<ProviderTestDto
 
 #[tauri::command]
 async fn generation_start(
+    app: tauri::AppHandle,
     state: State<'_, DesktopState>,
     chapter_id: String,
     instruction: String,
-) -> Result<Candidate, CommandErrorDto> {
+) -> Result<GenerationStartDto, CommandErrorDto> {
     let chapter_id = parse_uuid(&chapter_id)?;
     let root = current_root(&state)?;
     let documents = document_service(&state, &root)?;
@@ -269,21 +296,64 @@ async fn generation_start(
         chapter_id,
         instruction: instruction.clone(),
     });
-    match service.generate(chapter_id, instruction).await {
-        Ok(candidate) => {
-            state
-                .generation
-                .complete_success(task_id)
-                .map_err(CommandErrorDto::from)?;
-            Ok(candidate)
+    let cancel = CancellationToken::new();
+    state
+        .generation_tokens
+        .lock()
+        .map_err(|_| command_error("LOCK_ERROR", "generation token lock", false))?
+        .insert(task_id, cancel.clone());
+    let (deltas, mut deltas_rx) = tokio::sync::mpsc::unbounded_channel();
+    let task_app = app.clone();
+    let task_service = service.clone();
+    let task_cancel = cancel.clone();
+    tokio::spawn(async move {
+        let result = task_service
+            .generate_with_cancel_stream(chapter_id, instruction, task_cancel.clone(), deltas)
+            .await;
+        while let Some(delta) = deltas_rx.recv().await {
+            let _ = task_app.emit(
+                "generation-event",
+                GenerationEventDto::Delta {
+                    task_id,
+                    content: delta,
+                },
+            );
         }
-        Err(error) => {
-            let _ = state
-                .generation
-                .complete_failure(task_id, AiError::InvalidResponse);
-            Err(error.into())
+        let desktop_state = task_app.state::<DesktopState>();
+        let _ = desktop_state
+            .generation_tokens
+            .lock()
+            .map(|mut tokens| tokens.remove(&task_id));
+        match result {
+            Ok(candidate) => {
+                let _ = desktop_state.generation.complete_success(task_id);
+                let _ = task_app.emit(
+                    "generation-event",
+                    GenerationEventDto::Candidate { task_id, candidate },
+                );
+            }
+            Err(error) => {
+                if task_cancel.is_cancelled() {
+                    let _ = task_app.emit(
+                        "generation-event",
+                        GenerationEventDto::Cancelled { task_id },
+                    );
+                } else {
+                    let _ = desktop_state
+                        .generation
+                        .complete_failure(task_id, AiError::Cancelled);
+                    let _ = task_app.emit(
+                        "generation-event",
+                        GenerationEventDto::Error {
+                            task_id,
+                            error: error.into(),
+                        },
+                    );
+                }
+            }
         }
-    }
+    });
+    Ok(GenerationStartDto { task_id })
 }
 
 #[tauri::command]
@@ -329,6 +399,14 @@ async fn generation_cancel(
     task_id: String,
 ) -> Result<(), CommandErrorDto> {
     let task_id = parse_uuid(&task_id)?;
+    if let Some(cancel) = state
+        .generation_tokens
+        .lock()
+        .map_err(|_| command_error("LOCK_ERROR", "generation token lock", false))?
+        .remove(&task_id)
+    {
+        cancel.cancel();
+    }
     state
         .generation
         .cancel_generation(task_id)
