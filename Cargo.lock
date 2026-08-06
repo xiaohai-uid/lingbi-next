@@ -263,6 +263,19 @@ version = "0.1.0"
 [[package]]
 name = "lingbi-import-export"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "lingbi-application",
+ "lingbi-contracts",
+ "lingbi-domain",
+ "lingbi-storage",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "uuid",
+]
 
 [[package]]
 name = "lingbi-mutation"
