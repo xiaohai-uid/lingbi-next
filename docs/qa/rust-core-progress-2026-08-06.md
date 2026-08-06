@@ -15,6 +15,9 @@ Date: 2026-08-06
 - Milestone 8: Typed streaming AI provider core
 - Milestone 9: Secret store abstraction
 - Milestone 10: Recoverable generation state machine
+- Milestone 11: Tauri React desktop shell with application commands
+- Milestone 12: Deny-by-default Tauri capability boundary
+- Milestone 13 (shell): Welcome, project create/open, Markdown editor, save, and candidate panel scaffold
 
 ## Repositories
 
@@ -36,6 +39,10 @@ ca508bf feat(migration): add non-destructive Flutter V1 to V2 migration
 3f14dc6 feat(ai): implement typed streaming provider core
 9d4b05e feat(security): isolate provider secrets from frontend state
 db42e75 feat(writing): add recoverable generation state machine
+bea6604 feat(application): add revision-safe document CRUD
+305cc31 feat(desktop): bootstrap Tauri React shell with application commands
+392eb44 feat(desktop): enforce deny-by-default Tauri capabilities
+6b4d918 feat(desktop): add Golden Path shell UI tests
 ```
 
 ## Verification
@@ -46,6 +53,15 @@ all tests pass
 
 cargo clippy --workspace --all-targets -- -D warnings
 0 warnings
+
+cd apps/desktop && pnpm test
+3 passed
+
+cd apps/desktop && pnpm build
+PASS
+
+cd apps/desktop && pnpm tauri build --no-bundle
+PASS
 ```
 
 ## Flutter Milestone 0 verification
