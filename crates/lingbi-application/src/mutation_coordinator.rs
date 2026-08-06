@@ -90,6 +90,7 @@ impl MutationCoordinator {
             after_revision: document.revision,
             after_content_hash: document.content_hash.clone(),
             committed_at: Utc::now(),
+            idempotency_key: format!("adopt-{candidate_id}"),
         };
         self.receipts.write(&receipt)?;
         candidate.commit();
