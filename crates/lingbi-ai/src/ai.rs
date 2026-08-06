@@ -38,9 +38,11 @@ pub enum AiEvent {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderHealth {
+    pub provider_id: String,
     pub ok: bool,
     pub latency_ms: u64,
     pub model_id: String,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Error)]
@@ -78,7 +80,7 @@ pub trait AiProvider: Send + Sync {
         "unknown"
     }
 
-    async fn test_connection(&self) -> Result<ProviderHealth, AiError> {
+    async fn test_connection(&self) -> ProviderHealth {
         let started = Instant::now();
         let request = ChatRequest {
             messages: vec![ChatMessage {
@@ -90,23 +92,30 @@ pub trait AiProvider: Send + Sync {
         };
         let mut stream = self.stream_chat(request);
         let mut received_content = false;
+        let mut error = None;
         while let Some(event) = stream.next().await {
-            match event? {
-                AiEvent::ContentDelta(_) => {
+            match event {
+                Ok(AiEvent::ContentDelta(_)) => {
                     received_content = true;
                 }
-                AiEvent::Completed => break,
-                _ => {}
+                Ok(AiEvent::Completed) => break,
+                Ok(_) => {}
+                Err(stream_error) => {
+                    error = Some(stream_error.to_string());
+                    break;
+                }
             }
         }
-        if !received_content {
-            return Err(AiError::InvalidResponse);
+        if error.is_none() && !received_content {
+            error = Some(AiError::InvalidResponse.to_string());
         }
-        Ok(ProviderHealth {
-            ok: true,
+        ProviderHealth {
+            provider_id: self.provider_id().to_owned(),
+            ok: error.is_none(),
             latency_ms: started.elapsed().as_millis() as u64,
             model_id: self.model_id().to_owned(),
-        })
+            error,
+        }
     }
 
     fn model_id(&self) -> &str;
@@ -465,5 +474,27 @@ mod tests {
                 Ok(AiEvent::Completed),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn fake_provider_test_connection_returns_full_contract() {
+        let provider = FakeProvider::new("ok");
+
+        let health = provider.test_connection().await;
+
+        assert_eq!(health.provider_id, "fake");
+        assert_eq!(health.model_id, "fake-provider");
+        assert!(health.ok);
+        assert!(health.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn failed_provider_test_connection_returns_error_field() {
+        let provider = FakeProvider::with_error(AiError::AuthFailed);
+
+        let health = provider.test_connection().await;
+
+        assert!(!health.ok);
+        assert!(health.error.is_some());
     }
 }

@@ -197,7 +197,11 @@ async fn document_save(
 
 #[derive(Serialize)]
 struct ProviderTestDto {
-    configured: bool,
+    provider_id: String,
+    model_id: String,
+    ok: bool,
+    latency_ms: u64,
+    error: Option<String>,
 }
 
 #[tauri::command]
@@ -234,13 +238,15 @@ async fn provider_configure(
 
 #[tauri::command]
 async fn provider_test(state: State<'_, DesktopState>) -> Result<ProviderTestDto, CommandErrorDto> {
-    let configured = state
-        .secrets
-        .get("provider_key")
-        .await
-        .map_err(CommandErrorDto::from)?
-        .is_some();
-    Ok(ProviderTestDto { configured })
+    let provider = configured_provider(&state).await?;
+    let health = provider.test_connection().await;
+    Ok(ProviderTestDto {
+        provider_id: health.provider_id,
+        model_id: health.model_id,
+        ok: health.ok,
+        latency_ms: health.latency_ms,
+        error: health.error,
+    })
 }
 
 #[tauri::command]
