@@ -43,7 +43,7 @@ pub struct ProviderHealth {
     pub model_id: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Error)]
 pub enum AiError {
     #[error("no API key configured")]
     NoApiKey,
