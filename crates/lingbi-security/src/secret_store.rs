@@ -60,10 +60,63 @@ impl SecretStore for MemorySecretStore {
     }
 }
 
+#[derive(Clone)]
+pub struct KeyringSecretStore {
+    service: String,
+}
+
+impl KeyringSecretStore {
+    pub fn new(service: impl Into<String>) -> Self {
+        Self {
+            service: service.into(),
+        }
+    }
+}
+
+impl Default for KeyringSecretStore {
+    fn default() -> Self {
+        Self::new("com.lingbi.next")
+    }
+}
+
+#[async_trait]
+impl SecretStore for KeyringSecretStore {
+    async fn put(&self, key: &str, secret: SecretString) -> Result<(), AppError> {
+        let entry = keyring::Entry::new(&self.service, key).map_err(keyring_error)?;
+        entry.set_password(secret.expose()).map_err(keyring_error)
+    }
+
+    async fn get(&self, key: &str) -> Result<Option<SecretString>, AppError> {
+        let entry = keyring::Entry::new(&self.service, key).map_err(keyring_error)?;
+        match entry.get_password() {
+            Ok(value) => Ok(Some(SecretString::new(value))),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(keyring_error(error)),
+        }
+    }
+
+    async fn delete(&self, key: &str) -> Result<(), AppError> {
+        let entry = keyring::Entry::new(&self.service, key).map_err(keyring_error)?;
+        match entry.delete_credential() {
+            Ok(()) => Ok(()),
+            Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(keyring_error(error)),
+        }
+    }
+}
+
 fn lock_error() -> AppError {
     AppError::new(
         ErrorCode::ProjectCorrupted,
         "secret store lock poisoned".to_owned(),
+        false,
+    )
+}
+
+fn keyring_error(error: keyring::Error) -> AppError {
+    AppError::new(
+        ErrorCode::ProjectCorrupted,
+        format!("keyring secret store failed: {error}"),
         false,
     )
 }

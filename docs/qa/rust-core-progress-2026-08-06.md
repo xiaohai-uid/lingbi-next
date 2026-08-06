@@ -34,7 +34,7 @@ Date: 2026-08-06
 - Milestone 27: Signing policy for code, updater, and entitlement trust roots
 - Commercial readiness audit: Public Beta classification and external gate list
 - Milestone 29: shared Project V2 fixture compatibility, including Rust edit and Flutter reopen proof
-- Milestone 30 partial: Project V2 C ABI bridge plus flutter_rust_bridge project parsing and document storage with Cargokit Windows bundling
+- Milestone 30: Project V2 C ABI bridge plus flutter_rust_bridge project parsing and document storage with Cargokit Windows bundling, followed by the 15 local fix tasks on `milestone_30_continue_mutation`
 
 ## Repositories
 
@@ -92,6 +92,26 @@ c23ccc0 fix(test): skip transient live provider failures
 204cb6d feat(ffi): expose Rust document storage to Flutter
 ```
 
+Local fix-task commits (branch `milestone_30_continue_mutation`, ahead of `origin/main`):
+
+```text
+40647c0 fix(storage): compare expected hash against disk and verify writes
+5098d79 fix(application): pass expected content hash on save
+4da9ebc feat(storage): add recoverable document save transactions
+217a306 refactor(core): unify candidate schema across services
+b4f6321 fix(candidate): reject stale candidates before adoption
+0a48bdd refactor(core): route candidate adoption through mutation coordinator
+2172a92 feat(mutation): persist intents, approvals, receipts and document revisions
+0a90dd6 feat(recovery): recover mutation intents across crash failpoints
+1708628 test(candidate): verify ten consecutive adoptions
+7947c68 fix(migration): classify chapters and resources by directory
+dd00816 feat(desktop): return structured command errors
+f061638 feat(security): persist desktop API keys in OS keyring
+bdc495c feat(ai): return full provider test contract
+013d783 feat(desktop): stream generation events and cancel in flight
+1e718d6 feat(desktop): wire multi-chapter list, create, and select
+```
+
 ## Verification
 
 ```text
@@ -102,7 +122,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 0 warnings
 
 cd apps/desktop && pnpm test
-3 passed
+7 passed
 
 cd apps/desktop && pnpm build
 PASS
@@ -113,6 +133,12 @@ PASS
 cargo test -p lingbi-e2e-desktop
 1 passed
 
+cargo test -p lingbi-e2e-desktop --test real_desktop_binary_e2e
+1 passed (real Tauri release binary, TCP-only Xvfb)
+
+cargo test --workspace --lib
+all tests pass
+
 cd services/cloud && go test ./...
 10 passed
 
@@ -122,6 +148,25 @@ cd apps/website && pnpm test
 cd apps/website && pnpm build
 PASS
 ```
+
+## 2026-08-07 update
+
+The real desktop binary E2E now passes against a Tauri-CLI-built release. It
+exercises project create, multi-chapter create/select, edit, save, provider
+configure, streaming generation, candidate adoption, and reopen with persisted
+chapter state.
+
+Fixes landed on `milestone_30_continue_mutation`:
+
+- `lingbi-security` enables native OS keyring backends (`apple-native`,
+  `windows-native`, `linux-native`) so configured provider keys actually persist
+  instead of silently using the keyring mock store.
+- Desktop streaming listens for `generation-event` before starting generation,
+  so fast SSE candidates are no longer lost to a listener-registration race.
+- Tauri commands keep `project_get_session` current when documents are created,
+  opened, saved, or adopted, so the backend session matches the selected chapter.
+- The real desktop E2E uses a TCP-only Xvfb so it no longer depends on a
+  writable `/tmp/.X11-unix`, and its assertions match the real command contract.
 
 ## Milestone 15 status
 

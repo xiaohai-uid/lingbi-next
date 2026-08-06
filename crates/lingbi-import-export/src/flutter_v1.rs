@@ -13,6 +13,7 @@ pub struct MigrationReport {
     pub schema_version: Option<u32>,
     pub project_name: Option<String>,
     pub document_count: usize,
+    pub resource_count: usize,
     pub old_paths: Vec<String>,
     pub warnings: Vec<String>,
 }
@@ -22,6 +23,7 @@ pub struct MigrationReceipt {
     pub source: PathBuf,
     pub destination: PathBuf,
     pub documents_migrated: usize,
+    pub resources_migrated: usize,
     pub content_hashes: Vec<(String, String)>,
 }
 
@@ -36,13 +38,27 @@ pub fn inspect_v1(root: &Path) -> Result<MigrationReport, AppError> {
     let metadata = read_v1_metadata(&metadata_path, root)?;
     let mut warnings = metadata.warnings;
     let markdown_paths = scan_markdown(root)?;
+    let chapter_paths: Vec<_> = markdown_paths
+        .iter()
+        .filter(|path| is_chapter_path(path))
+        .cloned()
+        .collect();
+    let resource_paths: Vec<_> = markdown_paths
+        .iter()
+        .filter(|path| !is_chapter_path(path))
+        .cloned()
+        .collect();
     if markdown_paths.is_empty() {
         warnings.push("no markdown documents found".to_owned());
+    }
+    for path in &resource_paths {
+        warnings.push(format!("migrating {path} as a resource, not a chapter"));
     }
     Ok(MigrationReport {
         schema_version: metadata.schema_version,
         project_name: metadata.project_name,
-        document_count: markdown_paths.len(),
+        document_count: chapter_paths.len(),
+        resource_count: resource_paths.len(),
         old_paths: markdown_paths,
         warnings,
     })
@@ -85,27 +101,37 @@ pub fn migrate_v1_to_v2(source: &Path, destination: &Path) -> Result<MigrationRe
     )?;
 
     let mut documents = Vec::new();
+    let mut resources_migrated = 0usize;
     let mut content_hashes = Vec::new();
-    for (order, old_path) in report.old_paths.iter().enumerate() {
+    for old_path in report.old_paths.iter() {
         let bytes = fs::read(source.join(old_path)).map_err(io_error)?;
         let content_hash = hex_sha256(&bytes);
-        let id = Uuid::new_v4();
-        let title = Path::new(old_path)
-            .file_stem()
-            .map(|stem| stem.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "未命名".to_owned());
-        let new_path = destination.join("chapters").join(format!("{id}.md"));
-        store.write_atomic(&new_path, &bytes, None)?;
-        documents.push(Document {
-            id,
-            project_id: project.id,
-            title,
-            order: order as i64,
-            revision: 0,
-            content_hash: content_hash.clone(),
-            created_at: now,
-            updated_at: now,
-        });
+        if is_chapter_path(old_path) {
+            let id = Uuid::new_v4();
+            let title = Path::new(old_path)
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "未命名".to_owned());
+            let new_path = destination.join("chapters").join(format!("{id}.md"));
+            store.write_atomic(&new_path, &bytes, None)?;
+            documents.push(Document {
+                id,
+                project_id: project.id,
+                title,
+                order: documents.len() as i64,
+                revision: 0,
+                content_hash: content_hash.clone(),
+                created_at: now,
+                updated_at: now,
+            });
+        } else {
+            let resource_path = destination.join(old_path);
+            if let Some(parent) = resource_path.parent() {
+                fs::create_dir_all(parent).map_err(io_error)?;
+            }
+            store.write_atomic(&resource_path, &bytes, None)?;
+            resources_migrated += 1;
+        }
         content_hashes.push((old_path.clone(), content_hash));
     }
 
@@ -119,6 +145,7 @@ pub fn migrate_v1_to_v2(source: &Path, destination: &Path) -> Result<MigrationRe
         source: source.to_path_buf(),
         destination: destination.to_path_buf(),
         documents_migrated: documents.len(),
+        resources_migrated,
         content_hashes,
     })
 }
@@ -159,6 +186,11 @@ fn read_v1_metadata(path: &Path, root: &Path) -> Result<V1Metadata, AppError> {
         project_name,
         warnings,
     })
+}
+
+fn is_chapter_path(path: &str) -> bool {
+    let normalized = path.replace('\\', "/");
+    normalized.starts_with("章节内容/") || normalized.starts_with("chapters/")
 }
 
 fn scan_markdown(root: &Path) -> Result<Vec<String>, AppError> {
@@ -313,14 +345,62 @@ mod tests {
         fs::write(source.join("project_meta/第一章.md"), "B").expect("b");
         let destination = temp.path().join("v2");
 
-        migrate_v1_to_v2(&source, &destination).expect("migrate");
+        let receipt = migrate_v1_to_v2(&source, &destination).expect("migrate");
 
         let files: Vec<_> = fs::read_dir(destination.join("chapters"))
             .expect("chapters")
             .map(|entry| entry.expect("entry").path())
             .collect();
-        assert_eq!(files.len(), 2);
-        assert_ne!(files[0], files[1]);
+        assert_eq!(receipt.documents_migrated, 1);
+        assert_eq!(receipt.resources_migrated, 1);
+        assert_eq!(files.len(), 1);
+        assert_eq!(
+            fs::read_to_string(destination.join("project_meta/第一章.md")).expect("resource"),
+            "B"
+        );
+    }
+
+    #[test]
+    fn real_v1_layout_migrates_only_chapter_directories_as_documents() {
+        let temp = source_with_metadata("novel", false);
+        let source = temp.path().join("novel");
+        fs::create_dir_all(source.join("章节内容")).expect("章节内容");
+        fs::write(source.join("章节内容/第一章.md"), "# 第一章\n\n正文 A").expect("第一章");
+        fs::write(source.join("章节内容/第二章.md"), "# 第二章\n\n正文 B").expect("第二章");
+        fs::create_dir_all(source.join("小说资料")).expect("小说资料");
+        fs::write(source.join("小说资料/世界观.md"), "世界观资料").expect("世界观");
+        fs::write(source.join("小说资料/人物库.md"), "人物资料").expect("人物库");
+        fs::create_dir_all(source.join("project_meta")).expect("project_meta");
+        fs::write(source.join("project_meta/notes.md"), "项目笔记").expect("notes");
+        let destination = temp.path().join("v2");
+
+        let report = inspect_v1(&source).expect("inspect");
+        assert_eq!(report.document_count, 2);
+        assert_eq!(report.resource_count, 3);
+
+        let receipt = migrate_v1_to_v2(&source, &destination).expect("migrate");
+        assert_eq!(receipt.documents_migrated, 2);
+        assert_eq!(receipt.resources_migrated, 3);
+
+        let bytes = fs::read(destination.join(".lingbi/documents.json")).expect("documents");
+        let documents: Vec<Document> = serde_json::from_slice(&bytes).expect("documents json");
+        assert_eq!(documents.len(), 2);
+        assert!(documents.iter().all(|document| document.order < 2));
+
+        for resource in [
+            "小说资料/世界观.md",
+            "小说资料/人物库.md",
+            "project_meta/notes.md",
+        ] {
+            assert_eq!(
+                fs::read(destination.join(resource)).expect("resource"),
+                fs::read(source.join(resource)).expect("source resource")
+            );
+        }
+        assert_eq!(
+            fs::read(source.join("章节内容/第一章.md")).expect("source chapter"),
+            fs::read(destination.join(documents[0].physical_path())).expect("dest chapter")
+        );
     }
 
     #[test]

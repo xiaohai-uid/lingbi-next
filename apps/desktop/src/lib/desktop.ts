@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 export interface Project {
   id: string;
@@ -28,17 +29,107 @@ export interface Session {
 
 export interface GeneratedCandidate {
   id: string;
-  chapter_id: string;
+  project_id: string;
+  document_id: string;
   instruction: string;
+  base_revision: number;
+  base_content_hash: string;
   content: string;
+  content_hash: string;
+  provider_id: string;
+  model_id: string;
   status: string;
   created_at: string;
+  approved_at: string | null;
+  committed_at: string | null;
+}
+
+export interface CommandError {
+  code: string;
+  message: string;
+  retryable: boolean;
+}
+
+export interface GenerationEvent {
+  type: "delta" | "candidate" | "error" | "cancelled";
+  task_id: string;
+  content?: string;
+  candidate?: GeneratedCandidate;
+  error?: CommandError;
+}
+
+export function toCommandError(error: unknown): CommandError {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    "message" in error &&
+    "retryable" in error
+  ) {
+    const candidate = error as Record<string, unknown>;
+    return {
+      code: String(candidate.code),
+      message: String(candidate.message),
+      retryable: Boolean(candidate.retryable),
+    };
+  }
+  return {
+    code: "UNKNOWN",
+    message: String(error),
+    retryable: false,
+  };
 }
 
 const inTauri = () =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 const mockSessions = new Map<string, Session>();
+const mockDocuments = new Map<string, Document[]>();
+const mockContents = new Map<string, string>();
+
+async function generateStreaming(
+  chapterId: string,
+  instruction: string,
+  onStart?: (taskId: string) => void,
+): Promise<GeneratedCandidate> {
+  return new Promise<GeneratedCandidate>((resolve, reject) => {
+    let unlisten: (() => void) | undefined;
+    let taskId: string | null = null;
+    const cleanup = () => {
+      unlisten?.();
+    };
+    listen<GenerationEvent>("generation-event", (event) => {
+      if (taskId === null) {
+        taskId = event.payload.task_id;
+      } else if (event.payload.task_id !== taskId) {
+        return;
+      }
+      if (event.payload.type === "candidate" && event.payload.candidate) {
+        cleanup();
+        resolve(event.payload.candidate);
+      } else if (event.payload.type === "error" && event.payload.error) {
+        cleanup();
+        reject(event.payload.error);
+      } else if (event.payload.type === "cancelled") {
+        cleanup();
+        reject(toCommandError({ code: "AI_CANCELLED", message: "AI generation cancelled", retryable: false }));
+      }
+    })
+      .then(async (unlistenFn) => {
+        unlisten = unlistenFn;
+        const started = await invoke<{ task_id: string }>("generation_start", {
+          chapterId,
+          instruction,
+        });
+        taskId = started.task_id;
+        onStart?.(taskId);
+      })
+      .catch((error) => {
+        cleanup();
+        reject(error);
+      });
+  });
+}
 
 export const desktop = {
   async createProject(name: string, root: string): Promise<Session> {
@@ -68,6 +159,8 @@ export const desktop = {
       },
     };
     mockSessions.set(root, session);
+    mockDocuments.set(root, [session.current_document]);
+    mockContents.set(session.current_document.id, "# 第一章\n\n浏览器预览模式");
     return session;
   },
 
@@ -87,6 +180,15 @@ export const desktop = {
     return [...mockSessions.values()].at(-1) ?? null;
   },
 
+  async listDocuments(): Promise<Document[]> {
+    if (inTauri()) {
+      return invoke<Document[]>("document_list");
+    }
+    const session = [...mockSessions.values()].at(-1);
+    if (!session) return [];
+    return mockDocuments.get(session.root) ?? [];
+  },
+
   async createDocument(
     projectId: string,
     title: string,
@@ -99,14 +201,31 @@ export const desktop = {
         content,
       });
     }
-    throw new Error("document creation is not wired in browser mock");
+    const session = [...mockSessions.values()].at(-1);
+    if (!session) throw new Error("no session");
+    const now = new Date().toISOString();
+    const document: Document = {
+      id: crypto.randomUUID(),
+      project_id: projectId,
+      title,
+      order: (mockDocuments.get(session.root)?.length ?? 0),
+      revision: 0,
+      content_hash: "",
+      created_at: now,
+      updated_at: now,
+    };
+    const documents = [...(mockDocuments.get(session.root) ?? [])];
+    documents.push(document);
+    mockDocuments.set(session.root, documents);
+    mockContents.set(document.id, content);
+    return document;
   },
 
   async openDocument(documentId: string): Promise<string> {
     if (inTauri()) {
       return invoke<string>("document_open", { documentId });
     }
-    return "# 第一章\n\n浏览器预览模式";
+    return mockContents.get(documentId) ?? "";
   },
 
   async saveDocument(
@@ -147,21 +266,34 @@ export const desktop = {
   async generate(
     chapterId: string,
     instruction: string,
+    onStart?: (taskId: string) => void,
   ): Promise<GeneratedCandidate> {
     if (inTauri()) {
-      return invoke<GeneratedCandidate>("generation_start", {
-        chapterId,
-        instruction,
-      });
+      return generateStreaming(chapterId, instruction, onStart);
     }
+    onStart?.("browser-mock-task");
     return {
       id: crypto.randomUUID(),
-      chapter_id: chapterId,
+      project_id: crypto.randomUUID(),
+      document_id: chapterId,
       instruction,
+      base_revision: 0,
+      base_content_hash: "",
       content: "第一章正文：雨夜，林渊推开旧车站的门。",
+      content_hash: "",
+      provider_id: "fake",
+      model_id: "fake-provider",
       status: "pending",
       created_at: new Date().toISOString(),
+      approved_at: null,
+      committed_at: null,
     };
+  },
+
+  async generationCancel(taskId: string): Promise<void> {
+    if (inTauri()) {
+      await invoke("generation_cancel", { taskId });
+    }
   },
 
   async candidateList(chapterId: string): Promise<GeneratedCandidate[]> {

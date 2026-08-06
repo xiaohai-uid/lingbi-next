@@ -19,9 +19,11 @@ pub enum ErrorCode {
     AiNetworkError,
     AiServerError,
     AiInvalidResponse,
+    AiCancelled,
 
     MutationConflict,
     MutationNotApproved,
+    CandidateStale,
 
     ImportUnsupportedFormat,
     PackageUnsafePath,

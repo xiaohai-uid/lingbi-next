@@ -4,8 +4,11 @@ use futures_core::Stream;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use thiserror::Error;
+use tokio::sync::Notify;
 
 pub type AiStream = Pin<Box<dyn Stream<Item = Result<AiEvent, AiError>> + Send>>;
 
@@ -38,9 +41,11 @@ pub enum AiEvent {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderHealth {
+    pub provider_id: String,
     pub ok: bool,
     pub latency_ms: u64,
     pub model_id: String,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Error)]
@@ -59,6 +64,8 @@ pub enum AiError {
     Server(u16),
     #[error("invalid provider response")]
     InvalidResponse,
+    #[error("cancelled")]
+    Cancelled,
 }
 
 impl AiError {
@@ -72,9 +79,40 @@ impl AiError {
     }
 }
 
+#[derive(Clone, Default)]
+pub struct CancellationToken {
+    cancelled: Arc<AtomicBool>,
+    notify: Arc<Notify>,
+}
+
+impl CancellationToken {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+        self.notify.notify_waiters();
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+
+    pub async fn cancelled(&self) {
+        if !self.is_cancelled() {
+            self.notify.notified().await;
+        }
+    }
+}
+
 #[async_trait]
 pub trait AiProvider: Send + Sync {
-    async fn test_connection(&self) -> Result<ProviderHealth, AiError> {
+    fn provider_id(&self) -> &str {
+        "unknown"
+    }
+
+    async fn test_connection(&self) -> ProviderHealth {
         let started = Instant::now();
         let request = ChatRequest {
             messages: vec![ChatMessage {
@@ -86,26 +124,41 @@ pub trait AiProvider: Send + Sync {
         };
         let mut stream = self.stream_chat(request);
         let mut received_content = false;
+        let mut error = None;
         while let Some(event) = stream.next().await {
-            match event? {
-                AiEvent::ContentDelta(_) => {
+            match event {
+                Ok(AiEvent::ContentDelta(_)) => {
                     received_content = true;
                 }
-                AiEvent::Completed => break,
-                _ => {}
+                Ok(AiEvent::Completed) => break,
+                Ok(_) => {}
+                Err(stream_error) => {
+                    error = Some(stream_error.to_string());
+                    break;
+                }
             }
         }
-        if !received_content {
-            return Err(AiError::InvalidResponse);
+        if error.is_none() && !received_content {
+            error = Some(AiError::InvalidResponse.to_string());
         }
-        Ok(ProviderHealth {
-            ok: true,
+        ProviderHealth {
+            provider_id: self.provider_id().to_owned(),
+            ok: error.is_none(),
             latency_ms: started.elapsed().as_millis() as u64,
             model_id: self.model_id().to_owned(),
-        })
+            error,
+        }
     }
 
     fn model_id(&self) -> &str;
+
+    fn stream_chat_with_cancel(
+        &self,
+        request: ChatRequest,
+        _cancel: CancellationToken,
+    ) -> AiStream {
+        self.stream_chat(request)
+    }
 
     fn stream_chat(&self, request: ChatRequest) -> AiStream;
 }
@@ -142,8 +195,105 @@ impl OpenAiCompatibleProvider {
 }
 
 impl AiProvider for OpenAiCompatibleProvider {
+    fn provider_id(&self) -> &str {
+        "openai-compatible"
+    }
+
     fn model_id(&self) -> &str {
         &self.model
+    }
+
+    fn stream_chat_with_cancel(&self, request: ChatRequest, cancel: CancellationToken) -> AiStream {
+        let client = self.client.clone();
+        let base_url = self.base_url.clone();
+        let model = self.model.clone();
+        let api_key = self.api_key.clone().unwrap_or_default();
+
+        Box::pin(stream! {
+            if api_key.is_empty() {
+                yield Err(AiError::NoApiKey);
+                return;
+            }
+            let body = serde_json::json!({
+                "model": model,
+                "messages": request.messages,
+                "temperature": request.temperature,
+                "max_tokens": request.max_tokens,
+                "stream": true,
+            });
+            let response = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => {
+                    yield Err(AiError::Cancelled);
+                    return;
+                }
+                result = client.post(&base_url).bearer_auth(&api_key).json(&body).send() => {
+                    match result {
+                        Ok(response) => response,
+                        Err(error) if error.is_timeout() => {
+                            yield Err(AiError::Timeout);
+                            return;
+                        }
+                        Err(_) => {
+                            yield Err(AiError::Network);
+                            return;
+                        }
+                    }
+                }
+            };
+            let status = response.status().as_u16();
+            if !response.status().is_success() {
+                yield Err(AiError::from_status(status));
+                return;
+            }
+
+            let mut stream = response.bytes_stream();
+            let mut pending = String::new();
+            while let Some(chunk) = stream.next().await {
+                if cancel.is_cancelled() {
+                    yield Err(AiError::Cancelled);
+                    return;
+                }
+                let chunk = match chunk {
+                    Ok(chunk) => chunk,
+                    Err(_) => {
+                        yield Err(AiError::Network);
+                        return;
+                    }
+                };
+                pending.push_str(&String::from_utf8_lossy(&chunk));
+                let lines: Vec<String> = pending.split('\n').map(str::to_owned).collect();
+                pending = lines.last().cloned().unwrap_or_default().to_owned();
+                for line in lines.iter().take(lines.len().saturating_sub(1)) {
+                    let line = line.trim();
+                    if !line.starts_with("data: ") {
+                        continue;
+                    }
+                    let data = line.trim_start_matches("data: ").trim();
+                    if data == "[DONE]" {
+                        yield Ok(AiEvent::Completed);
+                        return;
+                    }
+                    let value: serde_json::Value = match serde_json::from_str(data) {
+                        Ok(value) => value,
+                        Err(_) => {
+                            yield Err(AiError::InvalidResponse);
+                            return;
+                        }
+                    };
+                    let Some(content) = value
+                        .pointer("/choices/0/delta/content")
+                        .and_then(|value| value.as_str())
+                    else {
+                        continue;
+                    };
+                    if !content.is_empty() {
+                        yield Ok(AiEvent::ContentDelta(content.to_owned()));
+                    }
+                }
+            }
+            yield Ok(AiEvent::Completed);
+        })
     }
 
     fn stream_chat(&self, request: ChatRequest) -> AiStream {
@@ -269,6 +419,10 @@ impl AnthropicProvider {
 }
 
 impl AiProvider for AnthropicProvider {
+    fn provider_id(&self) -> &str {
+        "anthropic"
+    }
+
     fn model_id(&self) -> &str {
         &self.model
     }
@@ -376,6 +530,10 @@ impl FakeProvider {
 }
 
 impl AiProvider for FakeProvider {
+    fn provider_id(&self) -> &str {
+        "fake"
+    }
+
     fn model_id(&self) -> &str {
         "fake-provider"
     }
@@ -449,5 +607,36 @@ mod tests {
                 Ok(AiEvent::Completed),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn fake_provider_test_connection_returns_full_contract() {
+        let provider = FakeProvider::new("ok");
+
+        let health = provider.test_connection().await;
+
+        assert_eq!(health.provider_id, "fake");
+        assert_eq!(health.model_id, "fake-provider");
+        assert!(health.ok);
+        assert!(health.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn failed_provider_test_connection_returns_error_field() {
+        let provider = FakeProvider::with_error(AiError::AuthFailed);
+
+        let health = provider.test_connection().await;
+
+        assert!(!health.ok);
+        assert!(health.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn cancellation_token_cancels_waiters() {
+        let token = CancellationToken::new();
+        assert!(!token.is_cancelled());
+        token.cancel();
+        assert!(token.is_cancelled());
+        token.cancelled().await;
     }
 }

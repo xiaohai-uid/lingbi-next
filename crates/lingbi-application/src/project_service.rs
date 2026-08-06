@@ -7,6 +7,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+use crate::document_service::DocumentApplicationService;
+
 #[derive(Debug, Clone)]
 pub struct CreateProjectRequest {
     pub name: String,
@@ -95,8 +97,12 @@ impl ProjectApplicationService {
             )
         })?;
 
-        let documents = read_documents(&self.store, &root, project.id)?;
-        let mut documents = documents;
+        let document_service = DocumentApplicationService::new(root.clone());
+        document_service.recover_pending()?;
+        let mut documents = document_service.list_documents()?;
+        if documents.is_empty() {
+            documents = read_documents(&self.store, &root, project.id)?;
+        }
         if documents.is_empty() {
             return Err(AppError::new(
                 ErrorCode::ProjectCorrupted,
@@ -287,5 +293,47 @@ mod tests {
         assert_eq!(opened.current_document.id, created.current_document.id);
         assert_eq!(opened.current_document.title, "第一章");
         assert!(!opened.dirty);
+    }
+
+    #[tokio::test]
+    async fn open_project_recovers_content_written_transaction() {
+        let temp = TempDir::new().expect("temp dir");
+        let root = temp.path().join("novel");
+        let service = ProjectApplicationService::new();
+        let created = service
+            .create_project(CreateProjectRequest {
+                name: "测试小说".to_owned(),
+                root: root.clone(),
+            })
+            .await
+            .expect("create project");
+        let document = created.current_document;
+        std::fs::write(root.join(document.physical_path()), "after").expect("write body");
+        let tx_id = Uuid::new_v4();
+        let tx_dir = root.join(".lingbi/transactions");
+        std::fs::create_dir_all(&tx_dir).expect("transactions dir");
+        let after_hash = hex_sha256(b"after");
+        let value = serde_json::json!({
+            "id": tx_id,
+            "document_id": document.id,
+            "before_revision": document.revision,
+            "before_hash": document.content_hash,
+            "after_revision": document.revision + 1,
+            "after_hash": after_hash,
+            "phase": "content_written",
+            "created_at": chrono::Utc::now(),
+            "body_relative_path": document.physical_path().to_string_lossy(),
+        });
+        std::fs::write(
+            tx_dir.join(format!("{tx_id}.json")),
+            serde_json::to_vec(&value).expect("serialize transaction"),
+        )
+        .expect("write transaction");
+
+        let opened = service.open_project(root).await.expect("open project");
+
+        assert_eq!(opened.current_document.revision, 1);
+        assert_eq!(opened.current_document.content_hash, hex_sha256(b"after"));
+        assert!(!tx_dir.join(format!("{tx_id}.json")).exists());
     }
 }
