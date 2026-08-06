@@ -1,0 +1,10 @@
+[package]
+name = "lingbi-e2e-desktop"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+lingbi-ai = { path = "../../crates/lingbi-ai" }
+lingbi-application = { path = "../../crates/lingbi-application" }
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

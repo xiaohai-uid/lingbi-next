@@ -569,6 +569,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lingbi-e2e-desktop"
+version = "0.1.0"
+dependencies = [
+ "lingbi-ai",
+ "lingbi-application",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "lingbi-ffi"
 version = "0.1.0"
 
