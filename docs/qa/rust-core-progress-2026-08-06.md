@@ -21,6 +21,7 @@ Date: 2026-08-06
 - Milestone 14: REAL Desktop Golden Path E2E through production services
 - Milestone 15 (partial): Markdown/TXT/DOCX export and verified portable ZIP exchange
 - Milestone 16: Modular Go Cloud bootstrap with health and readiness endpoints
+- Milestone 17: Account system with auth endpoints, hashed refresh tokens, and account migration
 
 ## Repositories
 
@@ -51,6 +52,7 @@ dd67c87 feat(desktop): wire generation and candidate commands
 04d0427 test(e2e): add REAL Desktop Golden Path
 1f26587 feat(import-export): ship verified portable manuscript exchange
 1126ac9 chore(cloud): bootstrap modular Go backend
+07ecbf8 feat(cloud): add account system with auth endpoints
 ```
 
 ## Verification
@@ -75,7 +77,7 @@ cargo test -p lingbi-e2e-desktop
 1 passed
 
 cd services/cloud && go test ./...
-2 passed
+6 passed
 ```
 
 ## Milestone 15 status
