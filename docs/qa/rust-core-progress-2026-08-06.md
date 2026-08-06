@@ -25,6 +25,7 @@ Date: 2026-08-06
 - Milestone 18: Ed25519 offline entitlement service with verification tests
 - Milestone 20: Next.js website scaffold with required public/account pages
 - Milestone 21: Go release/download endpoints behind ReleaseStorage
+- Milestone 23: Billing abstraction and idempotent webhook path
 
 ## Repositories
 
@@ -60,6 +61,7 @@ e1cc8fa feat(cloud): add Ed25519 offline entitlement service
 e1996ca feat(website): add Next.js site pages
 5c90671 chore(website): exclude Next.js build output
 4c4d4c4 feat(cloud): add release and download endpoints
+43a806c feat(cloud): add billing abstraction with idempotent webhooks
 ```
 
 ## Verification
