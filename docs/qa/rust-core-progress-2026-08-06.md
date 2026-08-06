@@ -19,6 +19,7 @@ Date: 2026-08-06
 - Milestone 12: Deny-by-default Tauri capability boundary
 - Milestone 13 (shell): Welcome, project create/open, Markdown editor, save, and candidate panel scaffold
 - Milestone 14: REAL Desktop Golden Path E2E through production services
+- Milestone 15 (partial): Markdown/TXT/DOCX export and verified portable ZIP exchange
 
 ## Repositories
 
@@ -47,6 +48,7 @@ bea6604 feat(application): add revision-safe document CRUD
 2b85ff8 feat(application): add approval-gated generation and candidate adoption
 dd67c87 feat(desktop): wire generation and candidate commands
 04d0427 test(e2e): add REAL Desktop Golden Path
+1f26587 feat(import-export): ship verified portable manuscript exchange
 ```
 
 ## Verification
@@ -70,6 +72,24 @@ PASS
 cargo test -p lingbi-e2e-desktop
 1 passed
 ```
+
+## Milestone 15 status
+
+Implemented and verified:
+
+- Markdown and TXT import
+- Markdown, TXT, and minimal DOCX export
+- Portable ZIP package with `MANIFEST.json`
+- Unsafe path rejection for `..`, absolute paths, drive prefixes, UNC paths, and NUL
+- SHA-256 checksum validation before extraction
+
+Not yet implemented:
+
+- PDF export and Chinese-capable PDF fixture
+- DOCX import
+- Flutter V1 package import as a separate portable format
+
+PDF remains `BLOCKED_EXTERNAL` until a verified Chinese-capable PDF path exists.
 
 ## Flutter Milestone 0 verification
 
