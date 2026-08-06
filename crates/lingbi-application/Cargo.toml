@@ -5,8 +5,11 @@ edition = "2024"
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
+futures-util = { version = "0.3", features = ["std"] }
+lingbi-ai = { path = "../lingbi-ai" }
 lingbi-contracts = { path = "../lingbi-contracts" }
 lingbi-domain = { path = "../lingbi-domain" }
+lingbi-mutation = { path = "../lingbi-mutation" }
 lingbi-security = { path = "../lingbi-security" }
 lingbi-storage = { path = "../lingbi-storage" }
 serde = { version = "1", features = ["derive"] }

@@ -535,8 +535,11 @@ name = "lingbi-application"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "futures-util",
+ "lingbi-ai",
  "lingbi-contracts",
  "lingbi-domain",
+ "lingbi-mutation",
  "lingbi-security",
  "lingbi-storage",
  "serde",

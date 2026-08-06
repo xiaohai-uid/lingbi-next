@@ -354,6 +354,48 @@ impl AiProvider for AnthropicProvider {
     }
 }
 
+pub struct FakeProvider {
+    response: String,
+    error: Option<AiError>,
+}
+
+impl FakeProvider {
+    pub fn new(response: impl Into<String>) -> Self {
+        Self {
+            response: response.into(),
+            error: None,
+        }
+    }
+
+    pub fn with_error(error: AiError) -> Self {
+        Self {
+            response: String::new(),
+            error: Some(error),
+        }
+    }
+}
+
+impl AiProvider for FakeProvider {
+    fn model_id(&self) -> &str {
+        "fake-provider"
+    }
+
+    fn stream_chat(&self, _request: ChatRequest) -> AiStream {
+        let response = self.response.clone();
+        let error = self.error.clone();
+        Box::pin(stream! {
+            if let Some(error) = error {
+                yield Err(error);
+                return;
+            }
+            if !response.is_empty() {
+                yield Ok(AiEvent::ContentDelta(response));
+            }
+            yield Ok(AiEvent::Completed);
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -384,5 +426,28 @@ mod tests {
         let event = stream.next().await.expect("event");
 
         assert_eq!(event, Err(AiError::NoApiKey));
+    }
+
+    #[tokio::test]
+    async fn fake_provider_streams_response_and_completes() {
+        let provider = FakeProvider::new("第一章正文");
+        let request = ChatRequest {
+            messages: vec![ChatMessage {
+                role: "user".to_owned(),
+                content: "write".to_owned(),
+            }],
+            temperature: 0.7,
+            max_tokens: 100,
+        };
+
+        let events: Vec<_> = provider.stream_chat(request).collect().await;
+
+        assert_eq!(
+            events,
+            vec![
+                Ok(AiEvent::ContentDelta("第一章正文".to_owned())),
+                Ok(AiEvent::Completed),
+            ]
+        );
     }
 }
