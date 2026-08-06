@@ -38,14 +38,29 @@ impl AtomicFileStore for DiskAtomicFileStore {
         expected_hash: Option<&str>,
     ) -> Result<String, AppError> {
         let content_hash = hex_sha256(bytes);
-        if let Some(expected) = expected_hash
-            && !expected.eq_ignore_ascii_case(&content_hash)
-        {
-            return Err(AppError::new(
-                ErrorCode::DocumentConflict,
-                "expected content hash does not match".to_owned(),
-                false,
-            ));
+        if let Some(expected) = expected_hash {
+            if !path.exists() {
+                return Err(AppError::new(
+                    ErrorCode::DocumentConflict,
+                    "expected content hash refers to a missing file".to_owned(),
+                    false,
+                ));
+            }
+            let current = fs::read(path).map_err(|error| {
+                AppError::new(
+                    ErrorCode::ProjectCorrupted,
+                    format!("read current file failed: {error}"),
+                    false,
+                )
+            })?;
+            let current_hash = hex_sha256(&current);
+            if !expected.eq_ignore_ascii_case(&current_hash) {
+                return Err(AppError::new(
+                    ErrorCode::DocumentConflict,
+                    "expected content hash does not match current file".to_owned(),
+                    false,
+                ));
+            }
         }
 
         let parent = path
@@ -83,6 +98,22 @@ impl AtomicFileStore for DiskAtomicFileStore {
             return Err(AppError::new(
                 ErrorCode::ProjectCorrupted,
                 format!("atomic replacement failed: {error}"),
+                false,
+            ));
+        }
+
+        let verified = fs::read(path).map_err(|error| {
+            AppError::new(
+                ErrorCode::ProjectCorrupted,
+                format!("post-write verification failed: {error}"),
+                false,
+            )
+        })?;
+        if hex_sha256(&verified) != content_hash {
+            let _ = fs::remove_file(path);
+            return Err(AppError::new(
+                ErrorCode::ProjectCorrupted,
+                "post-write verification hash mismatch".to_owned(),
                 false,
             ));
         }
@@ -152,6 +183,59 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(store.read(&path).expect("read"), b"canonical");
+    }
+
+    #[test]
+    fn expected_hash_compares_against_disk_content_before_write() {
+        let temp = TempDir::new().expect("temp dir");
+        let path = temp.path().join("chapter.md");
+        let store = DiskAtomicFileStore;
+        store
+            .write_atomic(&path, b"original", None)
+            .expect("write original");
+        let original_hash = hex_sha256(b"original");
+
+        let replacement_hash = store
+            .write_atomic(&path, b"replacement", Some(&original_hash))
+            .expect("write replacement");
+
+        assert_eq!(replacement_hash, hex_sha256(b"replacement"));
+        assert_eq!(store.read(&path).expect("read"), b"replacement");
+    }
+
+    #[test]
+    fn expected_hash_conflict_preserves_external_bytes() {
+        let temp = TempDir::new().expect("temp dir");
+        let path = temp.path().join("chapter.md");
+        let store = DiskAtomicFileStore;
+        store
+            .write_atomic(&path, b"original", None)
+            .expect("write original");
+        fs::write(&path, b"external").expect("external edit");
+        let original_hash = hex_sha256(b"original");
+
+        let result = store.write_atomic(&path, b"replacement", Some(&original_hash));
+
+        assert!(matches!(
+            result,
+            Err(AppError {
+                code: ErrorCode::DocumentConflict,
+                ..
+            })
+        ));
+        assert_eq!(store.read(&path).expect("read"), b"external");
+    }
+
+    #[test]
+    fn expected_hash_with_missing_file_does_not_create_content() {
+        let temp = TempDir::new().expect("temp dir");
+        let path = temp.path().join("chapter.md");
+        let store = DiskAtomicFileStore;
+
+        let result = store.write_atomic(&path, b"replacement", Some("missing-hash"));
+
+        assert!(result.is_err());
+        assert!(!path.exists());
     }
 
     #[test]
