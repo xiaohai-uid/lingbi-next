@@ -31,6 +31,7 @@ Date: 2026-08-06
 - Milestone 25: Sandbox checkout and billing webhook endpoints
 - Milestone 26: Failing-fast CI gate across Rust, frontend, website, Go, and Tauri
 - Milestone 28: Privacy baseline allow/deny policy
+- Milestone 27: Signing policy for code, updater, and entitlement trust roots
 
 ## Repositories
 
