@@ -28,6 +28,7 @@ Date: 2026-08-06
 - Milestone 23: Billing abstraction and idempotent webhook path
 - Milestone 19: Offline behavior proof for local manuscript editing and graceful AI failure
 - Milestone 22: Signed update manifest verification primitive
+- Milestone 25: Sandbox checkout and billing webhook endpoints
 
 ## Repositories
 
@@ -66,6 +67,7 @@ e1996ca feat(website): add Next.js site pages
 43a806c feat(cloud): add billing abstraction with idempotent webhooks
 b9f3f56 test(e2e): verify offline manuscript remains usable when AI fails
 2a618e6 feat(security): add signed update manifest verification
+e7e4dab feat(cloud): add sandbox checkout and billing webhook endpoints
 ```
 
 ## Verification
