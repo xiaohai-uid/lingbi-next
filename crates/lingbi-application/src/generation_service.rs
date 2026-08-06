@@ -309,4 +309,29 @@ mod tests {
             CandidateStatus::Stale
         );
     }
+
+    #[tokio::test]
+    async fn consecutive_candidate_adoptions_advance_revisions() {
+        let (temp, snapshot, documents) = setup().await;
+        let provider = Arc::new(FakeProvider::new("正文"));
+        let generation = GenerationService::new(temp.path().join("novel"), provider, documents);
+        let document_id = snapshot.current_document.id;
+        let mut revision = snapshot.current_document.revision;
+
+        for index in 0..10 {
+            let candidate = generation
+                .generate(document_id, format!("写第 {index} 次"))
+                .await
+                .expect("generate");
+            let adopted = generation
+                .adopt(candidate.id, revision)
+                .await
+                .unwrap_or_else(|error| panic!("adoption {index} failed: {error}"));
+            assert_eq!(adopted.revision, revision + 1);
+            revision += 1;
+        }
+
+        assert_eq!(revision, 10);
+        assert_eq!(generation.list(document_id).expect("list").len(), 10);
+    }
 }
