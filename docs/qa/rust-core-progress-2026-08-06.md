@@ -23,6 +23,7 @@ Date: 2026-08-06
 - Milestone 16: Modular Go Cloud bootstrap with health and readiness endpoints
 - Milestone 17: Account system with auth endpoints, hashed refresh tokens, and account migration
 - Milestone 18: Ed25519 offline entitlement service with verification tests
+- Milestone 20: Next.js website scaffold with required public/account pages
 
 ## Repositories
 
@@ -55,6 +56,8 @@ dd67c87 feat(desktop): wire generation and candidate commands
 1126ac9 chore(cloud): bootstrap modular Go backend
 07ecbf8 feat(cloud): add account system with auth endpoints
 e1cc8fa feat(cloud): add Ed25519 offline entitlement service
+e1996ca feat(website): add Next.js site pages
+5c90671 chore(website): exclude Next.js build output
 ```
 
 ## Verification
@@ -80,6 +83,12 @@ cargo test -p lingbi-e2e-desktop
 
 cd services/cloud && go test ./...
 10 passed
+
+cd apps/website && pnpm test
+1 passed
+
+cd apps/website && pnpm build
+PASS
 ```
 
 ## Milestone 15 status
