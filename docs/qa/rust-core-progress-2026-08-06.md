@@ -33,6 +33,7 @@ Date: 2026-08-06
 - Milestone 28: Privacy baseline allow/deny policy
 - Milestone 27: Signing policy for code, updater, and entitlement trust roots
 - Commercial readiness audit: Public Beta classification and external gate list
+- Milestone 29 partial: shared Project V2 fixture opens through Rust production services
 
 ## Repositories
 
