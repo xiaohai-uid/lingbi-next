@@ -1,0 +1,57 @@
+name: LingBi Next Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Rust format, clippy, tests
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace
+
+      - name: Go tests
+        run: |
+          cd services/cloud
+          go test ./...
+          go vet ./...
+
+      - name: Frontend and website
+        run: |
+          pnpm install
+          cd apps/desktop
+          pnpm test
+          pnpm build
+          cd ../website
+          pnpm test
+          pnpm build
+
+      - name: Tauri shell compile
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          cd apps/desktop
+          pnpm tauri build --no-bundle
