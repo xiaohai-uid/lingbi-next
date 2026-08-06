@@ -4,7 +4,6 @@ use futures_util::StreamExt;
 use lingbi_ai::{AiEvent, AiProvider, ChatMessage, ChatRequest};
 use lingbi_contracts::{AppError, ErrorCode};
 use lingbi_domain::Document;
-use lingbi_mutation::{CommitIntent, MutationEngine};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -125,23 +124,6 @@ impl GenerationService {
                 false,
             ));
         }
-
-        let mut engine = MutationEngine::new(self.root.clone());
-        let mutation_candidate = engine.propose(
-            candidate.chapter_id,
-            expected_revision,
-            candidate.content.clone(),
-            format!("candidate-{}", candidate.id),
-        );
-        let approval = engine.approve(mutation_candidate.id, "user")?;
-        engine.commit(CommitIntent {
-            id: Uuid::new_v4(),
-            candidate_id: mutation_candidate.id,
-            approval_id: approval.id,
-            target_path: format!("chapters/{}.md", candidate.chapter_id),
-            expected_revision,
-            idempotency_key: format!("adopt-{}", candidate.id),
-        })?;
 
         let document = self
             .documents

@@ -94,7 +94,9 @@ impl DocumentApplicationService {
         }
         let relative = Path::new("chapters").join(format!("{}.md", document.id));
         let path = self.guard.resolve(&relative)?;
-        let content_hash = self.store.write_atomic(&path, content.as_bytes(), None)?;
+        let content_hash =
+            self.store
+                .write_atomic(&path, content.as_bytes(), Some(&document.content_hash))?;
         let mut updated = document.clone();
         updated.revision += 1;
         updated.content_hash = content_hash;
@@ -198,6 +200,35 @@ mod tests {
         assert_eq!(
             service.read_document(created.id).await.expect("read"),
             "original"
+        );
+    }
+
+    #[tokio::test]
+    async fn external_content_change_is_conflict_even_when_revision_matches() {
+        let temp = TempDir::new().expect("temp dir");
+        let root = temp.path().join("project");
+        let service = DocumentApplicationService::new(&root);
+        let created = service
+            .create_document(Uuid::new_v4(), "第一章", "original")
+            .await
+            .expect("create");
+        let path = root.join(created.physical_path());
+        std::fs::write(&path, "external").expect("external edit");
+
+        let result = service
+            .save_document(created.id, created.revision, "replacement")
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(AppError {
+                code: ErrorCode::DocumentConflict,
+                ..
+            })
+        ));
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read external"),
+            "external"
         );
     }
 
