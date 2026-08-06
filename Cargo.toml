@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+
+members = [
+  "crates/lingbi-domain",
+  "crates/lingbi-contracts",
+  "crates/lingbi-application",
+  "crates/lingbi-project",
+  "crates/lingbi-storage",
+  "crates/lingbi-writing",
+  "crates/lingbi-ai",
+  "crates/lingbi-mutation",
+  "crates/lingbi-recovery",
+  "crates/lingbi-import-export",
+  "crates/lingbi-security",
+  "crates/lingbi-ffi",
+]
