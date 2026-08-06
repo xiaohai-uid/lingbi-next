@@ -8,9 +8,14 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/xiaohai-uid/lingbi-next/services/cloud/internal/auth"
 	"github.com/xiaohai-uid/lingbi-next/services/cloud/internal/entitlement"
+	"github.com/xiaohai-uid/lingbi-next/services/cloud/internal/releases"
 )
 
-func New(authService *auth.Service, entitlementService *entitlement.Service) http.Handler {
+func New(
+	authService *auth.Service,
+	entitlementService *entitlement.Service,
+	releaseService *releases.Service,
+) http.Handler {
 	router := chi.NewRouter()
 	router.Get("/healthz", func(writer http.ResponseWriter, _ *http.Request) {
 		writer.WriteHeader(http.StatusOK)
@@ -38,6 +43,9 @@ func New(authService *auth.Service, entitlementService *entitlement.Service) htt
 		}
 		writeJSON(writer, http.StatusOK, map[string]string{"entitlement": token})
 	})
+	router.Get("/v1/releases/latest", releaseService.LatestHandler)
+	router.Get("/v1/releases/{version}", releaseService.ByVersionHandler)
+	router.Get("/v1/download/windows/x86_64", releaseService.WindowsDownloadHandler)
 	return router
 }
 

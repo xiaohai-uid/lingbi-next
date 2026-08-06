@@ -7,6 +7,7 @@ import (
 
 	"github.com/xiaohai-uid/lingbi-next/services/cloud/internal/auth"
 	"github.com/xiaohai-uid/lingbi-next/services/cloud/internal/entitlement"
+	"github.com/xiaohai-uid/lingbi-next/services/cloud/internal/releases"
 	"github.com/xiaohai-uid/lingbi-next/services/cloud/internal/server"
 )
 
@@ -17,7 +18,18 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	handler := server.New(auth.NewService(), entitlement.New(privateKey))
+	releaseService := releases.NewService(releases.NewMemoryStorage(
+		releases.Release{
+			Version:     "0.1.0",
+			DownloadURL: "https://download.example/lingbi.exe",
+			SHA256:      "placeholder",
+		},
+	))
+	handler := server.New(
+		auth.NewService(),
+		entitlement.New(privateKey),
+		releaseService,
+	)
 	if err := http.ListenAndServe(address, handler); err != nil {
 		log.Fatal(err)
 	}
