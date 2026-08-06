@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "LingBi Next desktop shell permissions",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

@@ -1,0 +1,26 @@
+[package]
+name = "lingbi-desktop"
+version = "0.1.0"
+description = "LingBi Next Tauri desktop shell"
+authors = ["LingBi"]
+edition = "2021"
+
+[workspace]
+
+[lib]
+name = "lingbi_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+lingbi-application = { path = "../../../crates/lingbi-application" }
+lingbi-contracts = { path = "../../../crates/lingbi-contracts" }
+lingbi-domain = { path = "../../../crates/lingbi-domain" }
+lingbi-security = { path = "../../../crates/lingbi-security" }
+lingbi-writing = { path = "../../../crates/lingbi-writing" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+uuid = { version = "1", features = ["serde", "v4"] }
