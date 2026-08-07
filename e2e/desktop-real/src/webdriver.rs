@@ -164,7 +164,8 @@ pub fn session_state(driver: &WebDriver) -> Value {
             documents,
             content,
             revision: doc.revision,
-            hash: doc.content_hash
+            hash: doc.content_hash,
+            root: session.root
           })));
         }).catch((error) => done('error:' + error));
         "#;

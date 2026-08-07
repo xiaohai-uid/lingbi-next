@@ -15,7 +15,7 @@ use lingbi_e2e_desktop_real::repo_root;
 
 #[cfg(target_os = "windows")]
 #[test]
-fn windows_real_tauri_release_binary_e2e() {
+fn windows_novice_golden_path() {
     let repo = repo_root();
     let binary = release_binary(&repo);
     assert!(

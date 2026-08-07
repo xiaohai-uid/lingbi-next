@@ -410,6 +410,45 @@ async fn provider_configure(
         .map_err(CommandErrorDto::from)
 }
 
+#[derive(Serialize)]
+struct ProviderStatusDto {
+    configured: bool,
+    provider_id: String,
+    model_id: String,
+}
+
+/// Whether an AI service is configured, and with which provider/model.
+/// Never returns the API key.
+#[tauri::command]
+async fn provider_status(
+    state: State<'_, DesktopState>,
+) -> Result<ProviderStatusDto, CommandErrorDto> {
+    let key = state
+        .secrets
+        .get("provider_key")
+        .await
+        .map_err(CommandErrorDto::from)?;
+    let provider_id = state
+        .secrets
+        .get("provider_id")
+        .await
+        .map_err(CommandErrorDto::from)?
+        .map(|value| value.expose().to_owned())
+        .unwrap_or_else(|| "openai".to_owned());
+    let model_id = state
+        .secrets
+        .get("provider_model")
+        .await
+        .map_err(CommandErrorDto::from)?
+        .map(|value| value.expose().to_owned())
+        .unwrap_or_default();
+    Ok(ProviderStatusDto {
+        configured: key.is_some(),
+        provider_id,
+        model_id,
+    })
+}
+
 #[tauri::command]
 async fn provider_test(state: State<'_, DesktopState>) -> Result<ProviderTestDto, CommandErrorDto> {
     let provider = configured_provider(&state).await?;
@@ -459,9 +498,10 @@ async fn generation_start(
         // arrive. Consumer: this task forwards them to the UI as they
         // arrive (true streaming), while the generation is still running.
         let (result_tx, result_rx) = tokio::sync::oneshot::channel::<Result<Candidate, AppError>>();
+        let generation_cancel = task_cancel.clone();
         let generation_task = tokio::spawn(async move {
             let result = task_service
-                .generate_with_cancel_stream(chapter_id, instruction, task_cancel.clone(), deltas)
+                .generate_with_cancel_stream(chapter_id, instruction, generation_cancel, deltas)
                 .await;
             let _ = result_tx.send(result);
         });
@@ -755,6 +795,7 @@ pub fn run() {
             document_export,
             provider_list,
             provider_configure,
+            provider_status,
             provider_test,
             generation_start,
             generation_cancel,
