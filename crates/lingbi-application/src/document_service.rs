@@ -322,6 +322,18 @@ fn hex_sha256(bytes: &[u8]) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// `.lingbi/versions/<document_id>-r<revision>.md` — the archived body of
+/// the given document revision (Task 21 snapshot/version).
+fn snapshot_path(
+    root: &std::path::Path,
+    document_id: Uuid,
+    revision: u64,
+) -> Result<std::path::PathBuf, AppError> {
+    Ok(root
+        .join(".lingbi/versions")
+        .join(format!("{document_id}-r{revision}.md")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -610,16 +622,4 @@ mod tests {
         root.join(".lingbi/transactions")
             .join(format!("{tx_id}.json"))
     }
-}
-
-/// `.lingbi/versions/<document_id>-r<revision>.md` — the archived body of
-/// the given document revision (Task 21 snapshot/version).
-fn snapshot_path(
-    root: &std::path::Path,
-    document_id: Uuid,
-    revision: u64,
-) -> Result<std::path::PathBuf, AppError> {
-    Ok(root
-        .join(".lingbi/versions")
-        .join(format!("{document_id}-r{revision}.md")))
 }
