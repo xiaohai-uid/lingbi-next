@@ -1,0 +1,4 @@
+# Shared fixtures must keep LF line endings on every platform.
+# Windows checkout would otherwise convert them to CRLF and break
+# byte-exact content assertions (e.g. rust_opens_shared_project_v2_fixture).
+fixtures/** text eol=lf
