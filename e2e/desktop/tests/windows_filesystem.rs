@@ -363,7 +363,6 @@ async fn truncated_or_corrupted_target_fails_and_never_overwrites() {
 
 #[cfg(windows)]
 fn make_read_only(path: &Path) {
-    use std::os::windows::fs::PermissionsExt;
     let mut permissions = fs::metadata(path).expect("metadata").permissions();
     permissions.set_readonly(true);
     fs::set_permissions(path, permissions).expect("set readonly");
@@ -378,8 +377,10 @@ fn make_read_only(path: &Path) {
 }
 
 #[cfg(windows)]
+#[allow(clippy::permissions_set_readonly_false)]
+// Windows has no PermissionsExt (unstable); the readonly bit is the only
+// permission, so clearing it is the correct way to make the file writable.
 fn make_writable(path: &Path) {
-    use std::os::windows::fs::PermissionsExt;
     let mut permissions = fs::metadata(path).expect("metadata").permissions();
     permissions.set_readonly(false);
     fs::set_permissions(path, permissions).expect("set writable");

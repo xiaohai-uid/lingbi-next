@@ -284,7 +284,6 @@ async fn disk_write_failure_is_typed_and_preserves_content() {
 
 #[cfg(windows)]
 fn make_read_only(path: &std::path::Path) {
-    use std::os::windows::fs::PermissionsExt;
     let mut permissions = std::fs::metadata(path).expect("metadata").permissions();
     permissions.set_readonly(true);
     std::fs::set_permissions(path, permissions).expect("set readonly");
@@ -299,8 +298,10 @@ fn make_read_only(path: &std::path::Path) {
 }
 
 #[cfg(windows)]
+#[allow(clippy::permissions_set_readonly_false)]
+// Windows has no PermissionsExt (unstable); the readonly bit is the only
+// permission, so clearing it is the correct way to make the file writable.
 fn make_writable(path: &std::path::Path) {
-    use std::os::windows::fs::PermissionsExt;
     let mut permissions = std::fs::metadata(path).expect("metadata").permissions();
     permissions.set_readonly(false);
     std::fs::set_permissions(path, permissions).expect("set writable");

@@ -23,10 +23,10 @@ pub enum NativeDriver {
 pub fn native_driver() -> NativeDriver {
     #[cfg(target_os = "windows")]
     {
-        if let Ok(path) = std::env::var("LINGBI_EDGE_DRIVER") {
-            if !path.is_empty() {
-                return NativeDriver::Explicit(PathBuf::from(path));
-            }
+        if let Ok(path) = std::env::var("LINGBI_EDGE_DRIVER")
+            && !path.is_empty()
+        {
+            return NativeDriver::Explicit(PathBuf::from(path));
         }
         let well_known =
             PathBuf::from(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedgedriver.exe");
