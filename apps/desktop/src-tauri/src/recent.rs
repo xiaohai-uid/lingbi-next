@@ -34,8 +34,7 @@ impl RecentProjects {
             return Ok(Vec::new());
         }
         let bytes = fs::read(&self.path).map_err(io_error)?;
-        let projects: Vec<RecentProject> =
-            serde_json::from_slice(&bytes).map_err(parse_error)?;
+        let projects: Vec<RecentProject> = serde_json::from_slice(&bytes).map_err(parse_error)?;
         Ok(projects)
     }
 

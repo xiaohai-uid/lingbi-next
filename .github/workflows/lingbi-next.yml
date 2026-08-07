@@ -57,6 +57,14 @@ jobs:
           cargo test --workspace --exclude lingbi-e2e-desktop-real
         shell: pwsh
 
+      - name: Desktop shell format, clippy, unit tests
+        run: |
+          cd apps/desktop/src-tauri
+          cargo fmt --all -- --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test --lib
+        shell: pwsh
+
       - name: Go tests and vet
         run: |
           cd services/cloud

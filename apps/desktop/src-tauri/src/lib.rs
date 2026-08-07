@@ -132,7 +132,11 @@ async fn project_create(
 ) -> Result<SessionDto, CommandErrorDto> {
     // Novice flow: when no explicit root is provided, the app computes
     // {Documents}/LingBi/<name> so the user never needs to understand paths.
-    let root = match root.as_deref().map(str::trim).filter(|root| !root.is_empty()) {
+    let root = match root
+        .as_deref()
+        .map(str::trim)
+        .filter(|root| !root.is_empty())
+    {
         Some(explicit) => explicit.to_owned(),
         None => default_root_for(&name)
             .map_err(CommandErrorDto::from)?
@@ -395,7 +399,11 @@ async fn provider_list() -> Result<Vec<ProviderDefinitionDto>, CommandErrorDto> 
             protocol: definition.protocol.as_str().to_owned(),
             default_endpoint: definition.default_endpoint.to_owned(),
             recommended_model: definition.recommended_model.to_owned(),
-            models: definition.models.iter().map(|model| (*model).to_owned()).collect(),
+            models: definition
+                .models
+                .iter()
+                .map(|model| (*model).to_owned())
+                .collect(),
         })
         .collect())
 }
@@ -547,13 +555,13 @@ async fn generation_start(
                 },
             );
         }
-        let result = result_rx
-            .await
-            .unwrap_or_else(|_| Err(AppError::new(
+        let result = result_rx.await.unwrap_or_else(|_| {
+            Err(AppError::new(
                 lingbi_contracts::ErrorCode::AiInvalidResponse,
                 "generation task ended without a result".to_owned(),
                 false,
-            )));
+            ))
+        });
         let _ = generation_task.await;
         let desktop_state = task_app.state::<DesktopState>();
         let _ = desktop_state
@@ -755,7 +763,11 @@ async fn configured_provider(
         .map(|value| value.expose().to_owned())
         .unwrap_or_else(|| "openai".to_owned());
     let definition = lingbi_ai::find_provider(&provider_id).ok_or_else(|| {
-        command_error("UNKNOWN_PROVIDER", format!("unknown provider: {provider_id}"), false)
+        command_error(
+            "UNKNOWN_PROVIDER",
+            format!("unknown provider: {provider_id}"),
+            false,
+        )
     })?;
     let base_url = state
         .secrets
