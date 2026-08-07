@@ -153,6 +153,38 @@ jobs:
           "LINGBI_EDGE_DRIVER=$driver" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "msedgedriver ready: $driver"
 
+      - name: Minimal repro — app launch + tauri-driver session (diagnostics)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $app = Join-Path (Get-Location) 'apps/desktop/src-tauri/target/release/lingbi-desktop.exe'
+          Write-Host "app: $app exists=$(Test-Path $app)"
+
+          # 1) Can the release binary even stay alive on this runner?
+          $p = Start-Process -FilePath $app -PassThru
+          Start-Sleep -Seconds 6
+          if ($p.HasExited) { Write-Host "APP CRASHED exit=$($p.ExitCode)" }
+          else { Write-Host 'APP ALIVE after 6s'; Stop-Process -Id $p.Id -Force }
+
+          # 2) Minimal tauri-driver session, full output captured
+          $out = Join-Path $env:RUNNER_TEMP 'td-out.log'
+          $err = Join-Path $env:RUNNER_TEMP 'td-err.log'
+          $td = Start-Process -FilePath 'tauri-driver' -ArgumentList '--port','4455','--native-port','4456','--native-driver', $env:LINGBI_EDGE_DRIVER -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
+          Start-Sleep -Seconds 4
+          try { Invoke-RestMethod 'http://127.0.0.1:4455/status' -TimeoutSec 5 | Out-Null; Write-Host 'status: OK' }
+          catch { Write-Host "status: FAIL $_" }
+          $body = @{ capabilities = @{ alwaysMatch = @{ 'tauri:options' = @{ application = $app; args = @() } } } } | ConvertTo-Json -Depth 6
+          try {
+            $r = Invoke-RestMethod 'http://127.0.0.1:4455/session' -Method Post -ContentType 'application/json' -Body $body -TimeoutSec 40
+            Write-Host "session OK: $($r.value.sessionId)"
+          } catch { Write-Host "session FAIL: $_" }
+          Stop-Process -Id $td.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 1
+          Write-Host '--- tauri-driver stdout ---'
+          Get-Content $out -ErrorAction SilentlyContinue | Select-Object -Last 30
+          Write-Host '--- tauri-driver stderr ---'
+          Get-Content $err -ErrorAction SilentlyContinue | Select-Object -Last 30
+
       - name: Run real Windows desktop E2E (explicit, never skipped)
         run: |
           $output = cargo test -p lingbi-e2e-desktop-real --test windows_desktop_e2e -- --test-threads=1 2>&1
