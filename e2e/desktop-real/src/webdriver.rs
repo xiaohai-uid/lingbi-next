@@ -61,7 +61,7 @@ impl WebDriver {
 }
 
 /// Create a WebDriver session that launches `binary` via tauri-driver.
-pub fn create_session(base: &str, binary: &Path) -> WebDriver {
+pub fn create_session(base: &str, binary: &Path) -> Result<WebDriver, String> {
     let client = reqwest::blocking::Client::new();
     let body = json!({
         "capabilities": {
@@ -83,15 +83,17 @@ pub fn create_session(base: &str, binary: &Path) -> WebDriver {
         .post(format!("{base}/session"))
         .json(&body)
         .send()
-        .expect("create session");
-    let value: Value = response.json().expect("session json");
+        .map_err(|error| format!("create session request failed: {error}"))?;
+    let value: Value = response
+        .json()
+        .map_err(|error| format!("session json: {error}"))?;
     let value = value.get("value").cloned().unwrap_or(value);
     let session = value
         .get("sessionId")
         .and_then(Value::as_str)
-        .expect("session id")
+        .ok_or_else(|| format!("no sessionId in response: {value}"))?
         .to_owned();
-    WebDriver::new(base.to_owned(), session)
+    Ok(WebDriver::new(base.to_owned(), session))
 }
 
 /// Wait until `script` returns `ready`, panicking after `timeout`.

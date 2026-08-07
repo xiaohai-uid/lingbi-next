@@ -201,6 +201,13 @@ pub fn golden_path(binary: &Path) -> Result<(), String> {
     if let Some(display) = _display.display_env() {
         tauri.env("DISPLAY", display);
     }
+    // Keep tauri-driver's stderr so a failing session creation can be
+    // diagnosed instead of timing out silently.
+    let driver_log_path = crate::platform::free_port().to_string() + ".driver.log";
+    let driver_log_path = std::env::temp_dir().join(&driver_log_path);
+    let driver_log_handle = std::fs::File::create(&driver_log_path)
+        .map_err(|error| format!("driver log create: {error}"))?;
+    tauri.stderr(std::process::Stdio::from(driver_log_handle));
     let driver_process = ChildGuard::new(
         tauri
             .spawn()
@@ -209,10 +216,26 @@ pub fn golden_path(binary: &Path) -> Result<(), String> {
     let base = format!("http://127.0.0.1:{port}");
     wait_for_driver(&base)?;
 
+    // If a later step fails, surface the driver log for diagnosis.
+    fn log_on_failure(path: &std::path::Path, what: &str) {
+        if let Ok(bytes) = std::fs::read(path)
+            && !bytes.is_empty()
+        {
+            eprintln!("--- tauri-driver stderr ({what}) ---");
+            eprintln!("{}", String::from_utf8_lossy(&bytes));
+        }
+    }
+
     let sse_url = start_sse_server();
 
     // ---- Session 1: create, write, AI, generate, cancel, adopt, export ----
-    let first = create_session(&base, binary);
+    let first = match create_session(&base, binary) {
+        Ok(session) => session,
+        Err(error) => {
+            log_on_failure(&driver_log_path, "first session");
+            return Err(error);
+        }
+    };
     wait_for_text(&first, "LingBi Next", Duration::from_secs(30));
     wait_for_text(&first, "开始写作", Duration::from_secs(20));
 
@@ -314,7 +337,13 @@ pub fn golden_path(binary: &Path) -> Result<(), String> {
     thread::sleep(Duration::from_secs(1));
 
     // ---- Session 2: relaunch, open recent, everything intact ----
-    let second = create_session(&base, binary);
+    let second = match create_session(&base, binary) {
+        Ok(session) => session,
+        Err(error) => {
+            log_on_failure(&driver_log_path, "second session");
+            return Err(error);
+        }
+    };
     wait_for_text(&second, "LingBi Next", Duration::from_secs(30));
     click_button(&second, "打开已有作品");
     wait_for_text(&second, "最近作品", Duration::from_secs(20));

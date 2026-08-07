@@ -129,6 +129,27 @@ jobs:
         run: cargo install tauri-driver --locked
         shell: pwsh
 
+      - name: Probe Edge WebDriver location
+        shell: pwsh
+        run: |
+          $candidates = @(
+            'C:\Program Files (x86)\Microsoft\Edge\Application\msedgedriver.exe',
+            'C:\Program Files\Microsoft\Edge\Application\msedgedriver.exe'
+          )
+          $found = $null
+          foreach ($candidate in $candidates) {
+            if (Test-Path $candidate) { $found = $candidate; break }
+          }
+          if ($found) {
+            Write-Host "msedgedriver found: $found"
+            "LINGBI_EDGE_DRIVER=$found" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          } else {
+            Write-Host "msedgedriver not in well-known locations; PATH search:"
+            Get-Command msedgedriver -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+          }
+          Write-Host "Edge version:"
+          (Get-Item 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe').VersionInfo.ProductVersion
+
       - name: Run real Windows desktop E2E (explicit, never skipped)
         run: |
           $output = cargo test -p lingbi-e2e-desktop-real --test windows_desktop_e2e -- --test-threads=1 2>&1
