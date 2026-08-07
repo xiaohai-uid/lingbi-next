@@ -1,3 +1,17 @@
+# LingBi Next Release Gates
+#
+# Windows is the P0 product platform. The product cannot advance to Public
+# Beta until the Windows Product Gate passes end to end.
+#
+#   windows-core-gate    → the only product Release Gate. Any step failure
+#                          prints "Windows Product Gate = FAIL".
+#   linux-portability    → cross-platform Core/Web portability only.
+#
+# IMPORTANT:
+#   Linux PASS ≠ Windows Product PASS.
+#   Linux portability is a secondary signal: it can block a Core merge, but
+#   it never authorizes a product release. See docs/qa/release-gates.md.
+
 name: LingBi Next Gate
 
 on:
@@ -5,9 +19,14 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: lingbi-gate-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  gate:
-    runs-on: ubuntu-latest
+  windows-core-gate:
+    name: Windows Product Gate
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -32,14 +51,74 @@ jobs:
           cargo fmt --all -- --check
           cargo clippy --workspace --all-targets -- -D warnings
           cargo test --workspace
+        shell: pwsh
+
+      - name: Go tests and vet
+        run: |
+          cd services/cloud
+          go test ./...
+          go vet ./...
+        shell: pwsh
+
+      - name: Frontend tests and web build
+        run: |
+          pnpm install
+          cd apps/desktop
+          pnpm test
+          pnpm build
+        shell: pwsh
+
+      - name: Tauri release build (real Windows installer artifact)
+        run: |
+          cd apps/desktop
+          pnpm tauri build
+        shell: pwsh
+
+      - name: Windows Product Gate result
+        if: ${{ failure() }}
+        run: |
+          Write-Host "=============================================="
+          Write-Host "Windows Product Gate = FAIL"
+          Write-Host "=============================================="
+          exit 1
+        shell: pwsh
+
+  linux-portability:
+    name: Linux Portability
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      # Linux only protects cross-platform Core merges. It does NOT approve
+      # a product release: Linux PASS ≠ Windows Product PASS.
+      - name: Rust core compile
+        run: cargo build --workspace
+
+      - name: Rust unit tests
+        run: cargo test --workspace
 
       - name: Go tests
         run: |
           cd services/cloud
           go test ./...
-          go vet ./...
 
-      - name: Frontend and website
+      - name: Web build
         run: |
           pnpm install
           cd apps/desktop
@@ -48,10 +127,3 @@ jobs:
           cd ../website
           pnpm test
           pnpm build
-
-      - name: Tauri shell compile
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-          cd apps/desktop
-          pnpm tauri build --no-bundle
