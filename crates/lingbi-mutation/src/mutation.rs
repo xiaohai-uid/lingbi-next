@@ -73,6 +73,26 @@ impl ApprovalRepository {
             .map_err(parse_error)
     }
 
+    pub fn find_by_candidate(&self, candidate_id: Uuid) -> Result<Option<Approval>, AppError> {
+        let dir = self.root.join(".lingbi/approvals");
+        if !dir.exists() {
+            return Ok(None);
+        }
+        for entry in std::fs::read_dir(&dir).map_err(io_error)? {
+            let entry = entry.map_err(io_error)?;
+            let path = entry.path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+                continue;
+            }
+            let bytes = std::fs::read(&path).map_err(io_error)?;
+            let approval: Approval = serde_json::from_slice(&bytes).map_err(parse_error)?;
+            if approval.candidate_id == candidate_id {
+                return Ok(Some(approval));
+            }
+        }
+        Ok(None)
+    }
+
     fn approval_path(&self, id: Uuid) -> PathBuf {
         self.root
             .join(".lingbi/approvals")
@@ -319,11 +339,20 @@ impl MutationEngine {
             ));
         }
 
+        // Metadata: revision + content hash. A crash between the canonical
+        // write and this update is recovered by RecoveryService
+        // (body_is_after && metadata_before -> write_metadata_and_receipt).
+        let mut updated = document.clone();
+        updated.revision = document.revision + 1;
+        updated.content_hash = content_hash.clone();
+        updated.updated_at = Utc::now();
+        self.documents.update(&updated)?;
+
         let receipt = CommitReceipt {
             id: Uuid::new_v4(),
             candidate_id: intent.candidate_id,
             target_path: document.physical_path().to_string_lossy().into_owned(),
-            after_revision: document.revision + 1,
+            after_revision: updated.revision,
             after_content_hash: content_hash,
             committed_at: Utc::now(),
             idempotency_key: intent.idempotency_key.clone(),

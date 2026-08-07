@@ -1,5 +1,6 @@
 pub mod mutation;
 
 pub use mutation::{
-    Approval, CommitIntent, CommitReceipt, IntentRepository, MutationEngine, ReceiptRepository,
+    Approval, ApprovalRepository, CommitIntent, CommitReceipt, IntentRepository, MutationEngine,
+    ReceiptRepository,
 };

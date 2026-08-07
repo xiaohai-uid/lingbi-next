@@ -328,6 +328,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn adopt_goes_through_the_single_unified_mutation_path() {
+        let (temp, snapshot, documents) = setup().await;
+        let provider = Arc::new(FakeProvider::new("统一路径正文"));
+        let generation = GenerationService::new(temp.path().join("novel"), provider, documents);
+        let candidate = generation
+            .generate(snapshot.current_document.id, "写")
+            .await
+            .expect("generate");
+
+        let adopted = generation.adopt(candidate.id, 0).await.expect("adopt");
+
+        // Approval persisted.
+        let approvals = temp.path().join("novel/.lingbi/approvals");
+        assert!(
+            approvals.read_dir().expect("approvals").next().is_some(),
+            "approval must be persisted"
+        );
+        // CommitIntent persisted.
+        let intents = temp.path().join("novel/.lingbi/intents");
+        assert!(
+            intents.read_dir().expect("intents").next().is_some(),
+            "commit intent must be persisted"
+        );
+        // Receipt persisted and candidate committed.
+        assert!(
+            temp.path()
+                .join("novel/.lingbi/receipts")
+                .join(format!("{}.json", candidate.id))
+                .exists()
+        );
+        assert_eq!(
+            generation.list(snapshot.current_document.id).expect("list")[0].status,
+            CandidateStatus::Committed
+        );
+        // Metadata updated: revision and content hash on disk.
+        let loaded = lingbi_storage::DocumentRepository::new(temp.path().join("novel"))
+            .find(snapshot.current_document.id)
+            .expect("find")
+            .expect("document");
+        assert_eq!(loaded.revision, adopted.revision);
+        assert_eq!(loaded.revision, 1);
+        assert_eq!(
+            loaded.content_hash, candidate.content_hash,
+            "metadata content hash must match committed content"
+        );
+    }
+
+    #[tokio::test]
     async fn consecutive_candidate_adoptions_advance_revisions() {
         let (temp, snapshot, documents) = setup().await;
         let provider = Arc::new(FakeProvider::new("正文"));
