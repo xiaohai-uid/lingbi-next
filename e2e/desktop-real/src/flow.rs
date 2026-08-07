@@ -196,7 +196,29 @@ pub fn golden_path(binary: &Path) -> Result<(), String> {
     let driver = crate::platform::native_driver();
     let port = crate::platform::free_port();
     let native_port = crate::platform::free_port();
+
+    // Windows WebDriver automation: align the WebView2 user data folder with
+    // the directory msedgedriver reads DevToolsActivePort from (see
+    // create_session docs). The env var is inherited by tauri-driver ->
+    // msedgedriver -> app; the app arg pins msedgedriver's look-up directory.
+    // Without this, msedgedriver 150+ hangs ~60s on POST /session and dies
+    // with `DevToolsActivePort file doesn't exist` (surfaced as
+    // `hyper::Error(IncompleteMessage)`).
+    #[cfg(target_os = "windows")]
+    let webdriver_udd: Option<std::path::PathBuf> = {
+        let dir = std::env::temp_dir().join(format!("lingbi-webdriver-{port}"));
+        std::fs::create_dir_all(&dir)
+            .map_err(|error| format!("webdriver udd create: {error}"))?;
+        Some(dir)
+    };
+    #[cfg(not(target_os = "windows"))]
+    let webdriver_udd: Option<std::path::PathBuf> = None;
+
     let mut tauri = tauri_driver_command(&driver, port, native_port);
+    #[cfg(target_os = "windows")]
+    if let Some(udd) = &webdriver_udd {
+        tauri.env("WEBVIEW2_USER_DATA_FOLDER", udd);
+    }
     #[cfg(target_os = "linux")]
     if let Some(display) = _display.display_env() {
         tauri.env("DISPLAY", display);
@@ -229,7 +251,7 @@ pub fn golden_path(binary: &Path) -> Result<(), String> {
     let sse_url = start_sse_server();
 
     // ---- Session 1: create, write, AI, generate, cancel, adopt, export ----
-    let first = match create_session(&base, binary) {
+    let first = match create_session(&base, binary, webdriver_udd.as_deref()) {
         Ok(session) => session,
         Err(error) => {
             log_on_failure(&driver_log_path, "first session");
@@ -337,7 +359,7 @@ pub fn golden_path(binary: &Path) -> Result<(), String> {
     thread::sleep(Duration::from_secs(1));
 
     // ---- Session 2: relaunch, open recent, everything intact ----
-    let second = match create_session(&base, binary) {
+    let second = match create_session(&base, binary, webdriver_udd.as_deref()) {
         Ok(session) => session,
         Err(error) => {
             log_on_failure(&driver_log_path, "second session");
