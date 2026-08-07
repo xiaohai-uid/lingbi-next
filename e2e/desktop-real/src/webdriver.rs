@@ -1,6 +1,7 @@
 //! WebDriver client and UI helpers for driving the real LingBi binary.
 
 use serde_json::{Value, json};
+use std::error::Error;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
@@ -61,21 +62,39 @@ impl WebDriver {
 }
 
 /// Create a WebDriver session that launches `binary` via tauri-driver.
-pub fn create_session(base: &str, binary: &Path) -> Result<WebDriver, String> {
+///
+/// `webdriver_udd` aligns the WebView2 user data folder with the directory
+/// msedgedriver reads `DevToolsActivePort` from. msedgedriver 150+ launches
+/// WebView2 apps with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` (no
+/// `--user-data-dir` on the command line) and then waits for the
+/// `DevToolsActivePort` file inside the `--user-data-dir` value. The WebView2
+/// runtime writes that file into the environment's user data folder, so both
+/// sides must point at the same directory or session creation hangs ~60s and
+/// dies with `DevToolsActivePort file doesn't exist` (surfaced as
+/// `hyper::Error(IncompleteMessage)`).
+pub fn create_session(
+    base: &str,
+    binary: &Path,
+    webdriver_udd: Option<&Path>,
+) -> Result<WebDriver, String> {
     let client = reqwest::blocking::Client::new();
+    let mut args: Vec<String> = Vec::new();
+    if let Some(udd) = webdriver_udd {
+        args.push(format!("--user-data-dir={}", udd.display()));
+    }
     let body = json!({
         "capabilities": {
             "alwaysMatch": {
                 "tauri:options": {
                     "application": binary.to_string_lossy(),
-                    "args": []
+                    "args": &args
                 }
             }
         },
         "desiredCapabilities": {
             "tauri:options": {
                 "application": binary.to_string_lossy(),
-                "args": []
+                "args": &args
             }
         }
     });
@@ -83,10 +102,10 @@ pub fn create_session(base: &str, binary: &Path) -> Result<WebDriver, String> {
         .post(format!("{base}/session"))
         .json(&body)
         .send()
-        .map_err(|error| format!("create session request failed: {error}"))?;
+        .map_err(|error| format_error("create session request failed", &error))?;
     let value: Value = response
         .json()
-        .map_err(|error| format!("session json: {error}"))?;
+        .map_err(|error| format_error("session json", &error))?;
     let value = value.get("value").cloned().unwrap_or(value);
     let session = value
         .get("sessionId")
@@ -94,6 +113,16 @@ pub fn create_session(base: &str, binary: &Path) -> Result<WebDriver, String> {
         .ok_or_else(|| format!("no sessionId in response: {value}"))?
         .to_owned();
     Ok(WebDriver::new(base.to_owned(), session))
+}
+
+/// Format a request error including the underlying cause chain, so failures
+/// like `hyper::Error(IncompleteMessage)` are not swallowed.
+fn format_error(what: &str, error: &reqwest::Error) -> String {
+    let mut message = format!("{what}: {error}");
+    if let Some(source) = error.source() {
+        message.push_str(&format!(" ({source})"));
+    }
+    message
 }
 
 /// Wait until `script` returns `ready`, panicking after `timeout`.

@@ -153,33 +153,106 @@ jobs:
           "LINGBI_EDGE_DRIVER=$driver" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "msedgedriver ready: $driver"
 
-      - name: Minimal repro — app launch + tauri-driver session (diagnostics)
+      - name: Diagnose session creation (full evidence)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Continue'
           $app = Join-Path (Get-Location) 'apps/desktop/src-tauri/target/release/lingbi-desktop.exe'
           Write-Host "app: $app exists=$(Test-Path $app)"
 
-          # 1) Can the release binary even stay alive on this runner?
-          $p = Start-Process -FilePath $app -PassThru
-          Start-Sleep -Seconds 6
-          if ($p.HasExited) { Write-Host "APP CRASHED exit=$($p.ExitCode)" }
-          else { Write-Host 'APP ALIVE after 6s'; Stop-Process -Id $p.Id -Force }
+          # ---------- 1) versions & runtimes ----------
+          $edge = (Get-Item "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe").VersionInfo.ProductVersion
+          Write-Host "edge=$edge"
+          Write-Host "driverVer=$(& $env:LINGBI_EDGE_DRIVER --version 2>&1)"
+          try {
+            $crates = Select-String -Path "$env:CARGO_HOME\.crates.toml" -Pattern 'tauri-driver'
+            Write-Host "tauriDriver=$($crates.Line.Trim())"
+          } catch { Write-Host 'tauriDriver=unknown' }
+          $wv2 = Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' -ErrorAction SilentlyContinue
+          if ($wv2) { Write-Host "webview2Runtime(HKLM)=$($wv2.pv)" } else { Write-Host 'webview2Runtime(HKLM)=MISSING' }
+          $wv2u = Get-ItemProperty 'HKCU:\Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' -ErrorAction SilentlyContinue
+          if ($wv2u) { Write-Host "webview2Runtime(HKCU)=$($wv2u.pv)" } else { Write-Host 'webview2Runtime(HKCU)=none' }
+          Get-ChildItem Env: | Where-Object { $_.Name -like 'WEBVIEW2*' } | ForEach-Object { Write-Host "env $($_.Name)=$($_.Value)" }
 
-          # 2) Minimal tauri-driver session, full output captured
+          # ---------- 2) standalone app: window + webview2 children ----------
+          $p = Start-Process -FilePath $app -PassThru
+          Start-Sleep -Seconds 8
+          $p.Refresh()
+          Write-Host "app.alive=$(-not $p.HasExited) mainWindow='$($p.MainWindowTitle)' handle=$($p.MainWindowHandle)"
+          $wv2procs = @(Get-Process msedgewebview2 -ErrorAction SilentlyContinue)
+          Write-Host "webview2procCount=$($wv2procs.Count)"
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+
+          # ---------- 3) tauri-driver session, with curl + process probes ----------
           $out = Join-Path $env:RUNNER_TEMP 'td-out.log'
           $err = Join-Path $env:RUNNER_TEMP 'td-err.log'
           $td = Start-Process -FilePath 'tauri-driver' -ArgumentList '--port','4455','--native-port','4456','--native-driver', $env:LINGBI_EDGE_DRIVER -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
           Start-Sleep -Seconds 4
-          try { Invoke-RestMethod 'http://127.0.0.1:4455/status' -TimeoutSec 5 | Out-Null; Write-Host 'status: OK' }
-          catch { Write-Host "status: FAIL $_" }
+          try { Invoke-RestMethod 'http://127.0.0.1:4455/status' -TimeoutSec 5 | Out-Null; Write-Host 'tdStatus: OK' }
+          catch { Write-Host "tdStatus: FAIL $_" }
+          $nativeAlive = @(Get-Process msedgedriver -ErrorAction SilentlyContinue)
+          Write-Host "msedgedriverAlive=$($nativeAlive.Count) pid=$($nativeAlive.Id -join ',')"
+          if ($nativeAlive.Count -gt 0) {
+            try { Invoke-RestMethod 'http://127.0.0.1:4456/status' -TimeoutSec 5 | Out-Null; Write-Host 'nativeStatus: OK' }
+            catch { Write-Host "nativeStatus: FAIL $_" }
+          }
           $body = @{ capabilities = @{ alwaysMatch = @{ 'tauri:options' = @{ application = $app; args = @() } } } } | ConvertTo-Json -Depth 6
-          try {
-            $r = Invoke-RestMethod 'http://127.0.0.1:4455/session' -Method Post -ContentType 'application/json' -Body $body -TimeoutSec 40
-            Write-Host "session OK: $($r.value.sessionId)"
-          } catch { Write-Host "session FAIL: $_" }
+          $curlOut = Join-Path $env:RUNNER_TEMP 'curl-body.txt'
+          Write-Host '--- curl POST /session via tauri-driver (cap 30s) ---'
+          & curl.exe --max-time 30 -sS -w "HTTP_CODE=%{http_code} TIME=%{time_total}`n" -D - -X POST 'http://127.0.0.1:4455/session' -H 'Content-Type: application/json' --data $body -o $curlOut 2>&1 | Select-Object -First 25
+          Write-Host "curlExit=$LASTEXITCODE"
+          Write-Host '--- curl response body ---'
+          Get-Content $curlOut -ErrorAction SilentlyContinue | Select-Object -First 15
+          $apps = @(Get-Process lingbi-desktop -ErrorAction SilentlyContinue)
+          Write-Host "lingbiProcsAfterTd=$($apps.Count)"
+          $apps | ForEach-Object { Write-Host "  pid=$($_.Id) title='$($_.MainWindowTitle)'" }
+          $wv2 = @(Get-Process msedgewebview2 -ErrorAction SilentlyContinue)
+          Write-Host "webview2ProcsAfterTd=$($wv2.Count)"
+          $wv2 | ForEach-Object { Write-Host "  wv2pid=$($_.Id)" }
+          Write-Host '--- netstat 4455/4456 ---'
+          netstat -ano | Select-String '4455|4456' | Select-Object -First 12
+
+          # ---------- 4) bypass tauri-driver: direct msedgedriver with verbose logs ----------
+          # Stop tauri-driver first (it owns a msedgedriver on 4456)
           Stop-Process -Id $td.Id -Force -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 1
+          Get-Process lingbi-desktop,msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+          $drvOut = Join-Path $env:RUNNER_TEMP 'driver-out.log'
+          $drvErr = Join-Path $env:RUNNER_TEMP 'driver-err.log'
+          $native = Start-Process -FilePath $env:LINGBI_EDGE_DRIVER -ArgumentList '--port=4456','--host=127.0.0.1','--verbose' -RedirectStandardOutput $drvOut -RedirectStandardError $drvErr -PassThru
+          Start-Sleep -Seconds 4
+          try { Invoke-RestMethod 'http://127.0.0.1:4456/status' -TimeoutSec 5 | Out-Null; Write-Host 'directNativeStatus: OK' }
+          catch { Write-Host "directNativeStatus: FAIL $_" }
+          $nativeBody = @{ capabilities = @{ alwaysMatch = @{ 'ms:edgeOptions' = @{ binary = $app; args = @() }; 'ms:edgeChromium' = $true; 'browserName' = 'webview2' } } } | ConvertTo-Json -Depth 8 -Compress
+          $bodyFile = Join-Path $env:RUNNER_TEMP 'native-body.json'
+          Set-Content -Path $bodyFile -Value $nativeBody -Encoding utf8
+          $curlOut2 = Join-Path $env:RUNNER_TEMP 'curl-body2.txt'
+          Write-Host '--- curl POST /session directly to native driver (cap 60s) ---'
+          $curlNative = Start-Process -FilePath 'curl.exe' -ArgumentList '--max-time','60','-sS','-w','HTTP_CODE=%{http_code} TIME=%{time_total}','-X','POST','http://127.0.0.1:4456/session','-H','Content-Type: application/json','--data',"@$bodyFile" -PassThru
+          Start-Sleep -Seconds 12
+          # probe the app's real command line + CDP port while the session hangs
+          $appProcs = Get-CimInstance Win32_Process -Filter "Name='lingbi-desktop.exe'" -ErrorAction SilentlyContinue
+          $appProcs | ForEach-Object { Write-Host "appCmdLine: $($_.CommandLine)" }
+          $cdpPort = ''
+          foreach ($ap in $appProcs) { if ($ap.CommandLine -match 'remote-debugging-port=(\d+)') { $cdpPort = $matches[1]; break } }
+          Write-Host "cdpPort=$cdpPort"
+          if ($cdpPort) {
+            netstat -ano | Select-String ":$cdpPort " | Select-Object -First 6
+            Write-Host '--- curl CDP /json/version ---'
+            & curl.exe --max-time 5 -sS "http://127.0.0.1:$cdpPort/json/version" 2>&1 | Select-Object -First 5
+          }
+          Wait-Process -Id $curlNative.Id -Timeout 80 -ErrorAction SilentlyContinue
+          Write-Host "curlNativeExit=$($curlNative.ExitCode)"
+          Write-Host '--- native response body ---'
+          Get-Content $curlOut2 -ErrorAction SilentlyContinue | Select-Object -First 15
+          Stop-Process -Id $native.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 1
+          Write-Host '--- msedgedriver stdout (verbose) ---'
+          Get-Content $drvOut -ErrorAction SilentlyContinue | Select-Object -Last 60
+          Write-Host '--- msedgedriver stderr ---'
+          Get-Content $drvErr -ErrorAction SilentlyContinue | Select-Object -Last 30
           Write-Host '--- tauri-driver stdout ---'
           Get-Content $out -ErrorAction SilentlyContinue | Select-Object -Last 30
           Write-Host '--- tauri-driver stderr ---'
