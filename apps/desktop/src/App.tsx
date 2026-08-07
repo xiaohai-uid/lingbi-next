@@ -379,29 +379,53 @@ function RecoveryBanner() {
   const session = useAppStore((state) => state.session);
   const recoveryDismissed = useAppStore((state) => state.recoveryDismissed);
   const dismissRecovery = useAppStore((state) => state.dismissRecovery);
-  if (!session || recoveryDismissed) return null;
+  const loadRecoveryCandidate = useAppStore(
+    (state) => state.loadRecoveryCandidate,
+  );
+  const recoveryCandidate = useAppStore((state) => state.recoveryCandidate);
+  if (!session) return null;
 
-  if (session.protected) {
-    return (
+  const banner =
+    !recoveryDismissed && session.protected ? (
       <div className="recovery-banner protected" role="status">
         <strong>检测到上次异常关闭</strong>
         <p>你的当前正文已经保护，没有被覆盖。</p>
         <div className="actions">
           <button onClick={dismissRecovery}>保留当前版本</button>
-          <button onClick={dismissRecovery}>查看恢复内容</button>
+          <button onClick={() => void loadRecoveryCandidate()}>
+            查看恢复内容
+          </button>
         </div>
       </div>
-    );
-  }
-  if (session.recovered) {
-    return (
+    ) : !recoveryDismissed && session.recovered ? (
       <div className="recovery-banner" role="status">
         <strong>已恢复上次未完成的保存</strong>
         <button onClick={dismissRecovery}>知道了</button>
       </div>
-    );
-  }
-  return null;
+    ) : null;
+
+  const dialog = recoveryCandidate ? (
+    <div className="recovery-dialog" role="dialog" aria-label="恢复内容">
+      <div>
+        <strong>上次 AI 生成的内容</strong>
+        <p>{recoveryCandidate.content}</p>
+        <div className="actions">
+          <button
+            onClick={() => useAppStore.setState({ recoveryCandidate: null })}
+          >
+            关闭
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  return (
+    <>
+      {banner}
+      {dialog}
+    </>
+  );
 }
 
 function SaveStatus() {

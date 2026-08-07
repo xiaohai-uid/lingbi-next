@@ -116,6 +116,7 @@ const inTauri = () =>
 const mockSessions = new Map<string, Session>();
 const mockDocuments = new Map<string, Document[]>();
 const mockContents = new Map<string, string>();
+const mockCandidates = new Map<string, GeneratedCandidate[]>();
 
 async function generateStreaming(
   chapterId: string,
@@ -387,7 +388,7 @@ export const desktop = {
       return generateStreaming(chapterId, instruction, onStart, onDelta);
     }
     onStart?.("browser-mock-task");
-    return {
+    const candidate: GeneratedCandidate = {
       id: crypto.randomUUID(),
       project_id: crypto.randomUUID(),
       document_id: chapterId,
@@ -403,6 +404,11 @@ export const desktop = {
       approved_at: null,
       committed_at: null,
     };
+    mockCandidates.set(chapterId, [
+      ...(mockCandidates.get(chapterId) ?? []),
+      candidate,
+    ]);
+    return candidate;
   },
 
   async generationCancel(taskId: string): Promise<void> {
@@ -415,7 +421,7 @@ export const desktop = {
     if (inTauri()) {
       return invoke<GeneratedCandidate[]>("candidate_list", { chapterId });
     }
-    return [];
+    return mockCandidates.get(chapterId) ?? [];
   },
 
   async candidateAdopt(

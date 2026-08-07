@@ -30,7 +30,9 @@ interface AppStore {
   streamingText: string;
   recoveryDismissed: boolean;
   lastSavedContent: string;
+  recoveryCandidate: GeneratedCandidate | null;
   dismissRecovery: () => void;
+  loadRecoveryCandidate: () => Promise<void>;
   createProject: (name: string, root?: string) => Promise<void>;
   openProject: (root: string) => Promise<void>;
   loadRecent: () => Promise<void>;
@@ -76,9 +78,23 @@ export const useAppStore = create<AppStore>((set, get) => ({
   streamingText: "",
   recoveryDismissed: false,
   lastSavedContent: "",
+  recoveryCandidate: null,
 
   dismissRecovery() {
     set({ recoveryDismissed: true });
+  },
+
+  async loadRecoveryCandidate() {
+    const session = get().session;
+    if (!session) return;
+    try {
+      const candidates = await desktop.candidateList(
+        session.current_document.id,
+      );
+      set({ recoveryCandidate: candidates.at(-1) ?? null });
+    } catch {
+      set({ recoveryCandidate: null });
+    }
   },
 
   async createProject(name, root) {

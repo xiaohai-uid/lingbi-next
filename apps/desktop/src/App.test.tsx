@@ -197,6 +197,51 @@ describe("LingBi Next desktop shell", () => {
     expect(screen.queryByText(/CommitIntent|SHA256|MutationIncident/)).toBeNull();
   });
 
+  it("查看恢复内容 shows the recovered AI content instead of dismissing", async () => {
+    const session = {
+      root: "/p/novel",
+      dirty: false,
+      recovered: false,
+      protected: true,
+      project: {
+        id: "p1",
+        name: "小说",
+        schema_version: 2,
+        created_at: "",
+        updated_at: "",
+      },
+      current_document: {
+        id: "d1",
+        project_id: "p1",
+        title: "第一章",
+        order: 0,
+        revision: 0,
+        content_hash: "",
+        created_at: "",
+        updated_at: "",
+      },
+    };
+    useAppStore.setState({
+      session,
+      documents: [session.current_document],
+      selectedTab: "editor",
+      recoveryDismissed: false,
+      recoveryCandidate: null,
+    });
+    const { desktop } = await import("./lib/desktop");
+    await desktop.generate("d1", "恢复测试");
+
+    render(<App />);
+    await userEvent.setup().click(
+      screen.getByRole("button", { name: "查看恢复内容" }),
+    );
+
+    expect(
+      await screen.findByText("第一章正文：雨夜，林渊推开旧车站的门。"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "恢复内容" })).toBeInTheDocument();
+  });
+
   it("shows the recovered banner after safe recovery", () => {
     const session = {
       root: "/p/novel",
