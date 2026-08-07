@@ -1132,6 +1132,7 @@ dependencies = [
  "chrono",
  "lingbi-ai",
  "lingbi-application",
+ "lingbi-contracts",
  "lingbi-domain",
  "lingbi-mutation",
  "lingbi-recovery",
