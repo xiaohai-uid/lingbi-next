@@ -4,6 +4,7 @@ use lingbi_domain::{Candidate, CandidateStatus};
 use lingbi_security::ProjectPathGuard;
 use lingbi_storage::{
     AtomicFileStore, CandidateRepository, DiskAtomicFileStore, DocumentRepository,
+    DocumentTransaction, DocumentTransactionRepository, TransactionPhase,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -210,6 +211,7 @@ pub struct MutationEngine {
     intents: IntentRepository,
     receipts: ReceiptRepository,
     documents: DocumentRepository,
+    transactions: DocumentTransactionRepository,
 }
 
 impl MutationEngine {
@@ -224,7 +226,8 @@ impl MutationEngine {
             approvals: ApprovalRepository::new(root.clone()),
             intents: IntentRepository::new(root.clone()),
             receipts: ReceiptRepository::new(root.clone()),
-            documents: DocumentRepository::new(root),
+            documents: DocumentRepository::new(root.clone()),
+            transactions: DocumentTransactionRepository::new(root),
         }
     }
 
@@ -328,16 +331,38 @@ impl MutationEngine {
         })?;
         let payload = candidate.content.as_bytes();
         let content_hash = hex_sha256(payload);
+
+        // DocumentTransaction journal (Task 12): the unified path writes
+        // through the same crash journal as user saves, so a crash at any
+        // phase is completed by recover_pending on next open (and the
+        // intent journal covers receipt/commit).
+        let transaction = DocumentTransaction {
+            id: Uuid::new_v4(),
+            document_id: document.id,
+            before_revision: document.revision,
+            before_hash: document.content_hash.clone(),
+            after_revision: document.revision + 1,
+            after_hash: content_hash.clone(),
+            phase: TransactionPhase::Created,
+            created_at: Utc::now(),
+            body_relative_path: document.physical_path().to_string_lossy().into_owned(),
+        };
+        self.transactions.begin(&transaction)?;
+
         self.store
             .write_atomic(&target, payload, Some(&document.content_hash))?;
         let verified = self.store.read(&target)?;
         if hex_sha256(&verified) != content_hash {
+            self.transactions
+                .set_phase(transaction.id, TransactionPhase::Failed)?;
             return Err(AppError::new(
                 ErrorCode::ProjectCorrupted,
                 "verified content hash mismatch".to_owned(),
                 false,
             ));
         }
+        self.transactions
+            .set_phase(transaction.id, TransactionPhase::ContentWritten)?;
 
         // Metadata: revision + content hash. A crash between the canonical
         // write and this update is recovered by RecoveryService
@@ -347,6 +372,8 @@ impl MutationEngine {
         updated.content_hash = content_hash.clone();
         updated.updated_at = Utc::now();
         self.documents.update(&updated)?;
+        self.transactions
+            .set_phase(transaction.id, TransactionPhase::IndexUpdated)?;
 
         let receipt = CommitReceipt {
             id: Uuid::new_v4(),
@@ -358,6 +385,9 @@ impl MutationEngine {
             idempotency_key: intent.idempotency_key.clone(),
         };
         self.receipts.write(&receipt)?;
+        self.transactions
+            .set_phase(transaction.id, TransactionPhase::Completed)?;
+        self.transactions.delete(transaction.id)?;
         candidate.commit();
         self.candidates.write(&candidate)?;
         Ok(receipt)
@@ -617,6 +647,38 @@ mod tests {
 
         assert_eq!(loaded_candidate.status, CandidateStatus::Approved);
         assert_eq!(loaded_approval.candidate_id, candidate.id);
+    }
+
+    #[tokio::test]
+    async fn successful_commit_leaves_no_transaction_behind() {
+        let temp = TempDir::new().expect("temp dir");
+        let (engine, document_id, _) = setup_engine(&temp);
+        let candidate = engine
+            .propose(candidate(document_id, "new content"))
+            .expect("propose");
+        let approval = engine.approve(candidate.id, "user").expect("approve");
+
+        engine
+            .commit(CommitIntent {
+                id: Uuid::new_v4(),
+                candidate_id: candidate.id,
+                approval_id: approval.id,
+                target_path: "chapters/chapter.md".to_owned(),
+                expected_revision: 0,
+                idempotency_key: "key-1".to_owned(),
+            })
+            .expect("commit");
+
+        let transactions = temp.path().join("project/.lingbi/transactions");
+        assert!(
+            !transactions.exists()
+                || transactions
+                    .read_dir()
+                    .expect("transactions")
+                    .next()
+                    .is_none(),
+            "no transaction record may linger after a successful commit"
+        );
     }
 
     #[tokio::test]

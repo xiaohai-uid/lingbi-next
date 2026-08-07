@@ -7,7 +7,10 @@ use lingbi_mutation::{
     Approval, ApprovalRepository, CommitIntent, CommitReceipt, IntentRepository, ReceiptRepository,
 };
 use lingbi_recovery::RecoveryService;
-use lingbi_storage::{CandidateRepository, DocumentRepository};
+use lingbi_storage::{
+    CandidateRepository, DocumentRepository, DocumentTransaction, DocumentTransactionRepository,
+    TransactionPhase,
+};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
@@ -83,6 +86,34 @@ async fn setup_failpoint(root: &Path, phase: &str) -> Uuid {
             .expect("write intent");
     }
 
+    // The unified engine now journals a DocumentTransaction through the
+    // commit; simulate the exact on-disk shape at each crash point.
+    let transaction = DocumentTransaction {
+        id: Uuid::new_v4(),
+        document_id: document.id,
+        before_revision: document.revision,
+        before_hash: document.content_hash.clone(),
+        after_revision: document.revision + 1,
+        after_hash: hex_sha256(b"after content"),
+        phase: match phase {
+            "AfterApproval" => TransactionPhase::Created,
+            "AfterIntent" => TransactionPhase::Created,
+            "AfterContentWrite" => TransactionPhase::ContentWritten,
+            "AfterMetadataWrite" | "BeforeReceipt" | "BeforeCommitted" => {
+                TransactionPhase::IndexUpdated
+            }
+            "External" => TransactionPhase::Created,
+            _ => TransactionPhase::Created,
+        },
+        created_at: chrono::Utc::now(),
+        body_relative_path: document.physical_path().to_string_lossy().into_owned(),
+    };
+    if phase != "AfterApproval" {
+        DocumentTransactionRepository::new(root)
+            .begin(&transaction)
+            .expect("begin transaction");
+    }
+
     let body = root.join(document.physical_path());
     match phase {
         "AfterContentWrite" | "AfterMetadataWrite" | "BeforeReceipt" | "BeforeCommitted" => {
@@ -135,6 +166,28 @@ async fn verify_recovered(root: &Path, document_id: Uuid, phase: &str) {
     let receipts_dir = root.join(".lingbi/receipts");
     let receipt_exists =
         receipts_dir.exists() && receipts_dir.read_dir().expect("receipts").next().is_some();
+
+    // After recovery no transaction may linger in a non-terminal state.
+    let transactions_dir = root.join(".lingbi/transactions");
+    let lingering: Vec<String> = if transactions_dir.exists() {
+        transactions_dir
+            .read_dir()
+            .expect("transactions dir")
+            .flatten()
+            .filter_map(|entry| {
+                let bytes = std::fs::read(entry.path()).ok()?;
+                let tx: DocumentTransaction = serde_json::from_slice(&bytes).ok()?;
+                (tx.phase != TransactionPhase::Failed && tx.phase != TransactionPhase::Completed)
+                    .then(|| format!("{:?}", tx.phase))
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    assert!(
+        lingering.is_empty(),
+        "transactions must converge after recovery: {lingering:?}"
+    );
 
     match phase {
         // Crash before any intent: nothing to recover, nothing overwritten.
