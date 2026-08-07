@@ -1129,6 +1129,7 @@ dependencies = [
 name = "lingbi-e2e-desktop"
 version = "0.1.0"
 dependencies = [
+ "async-stream",
  "chrono",
  "lingbi-ai",
  "lingbi-application",

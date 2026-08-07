@@ -69,9 +69,20 @@ impl GenerationService {
             max_tokens: 2048,
         };
 
-        let mut stream = self.provider.stream_chat_with_cancel(request, cancel);
+        let mut stream = self
+            .provider
+            .stream_chat_with_cancel(request, cancel.clone());
         let mut content = String::new();
         while let Some(event) = stream.next().await {
+            // Belt and braces: even if the provider does not honor the
+            // token, the service stops the moment cancellation arrives.
+            if cancel.is_cancelled() {
+                return Err(AppError::new(
+                    ErrorCode::AiCancelled,
+                    "AI generation cancelled".to_owned(),
+                    false,
+                ));
+            }
             match event.map_err(ai_error)? {
                 AiEvent::ContentDelta(delta) => {
                     let _ = deltas.send(delta.clone());

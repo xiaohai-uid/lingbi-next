@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+async-stream = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
 lingbi-ai = { path = "../../crates/lingbi-ai" }
 lingbi-contracts = { path = "../../crates/lingbi-contracts" }

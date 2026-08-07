@@ -124,6 +124,39 @@ describe("LingBi Next desktop shell", () => {
     expect(humanizeError("DocumentConflict").guidance).toContain("没有覆盖");
   });
 
+  it("maps every typed AI/disk error to Chinese guidance with a next step", () => {
+    const codes = [
+      "AiAuthFailed",
+      "AiNoApiKey",
+      "AiRateLimited",
+      "AiServerError",
+      "AiTimeout",
+      "AiNetworkError",
+      "AiInvalidResponse",
+      "AiCancelled",
+      "DocumentConflict",
+      "CandidateStale",
+    ];
+    for (const code of codes) {
+      const human = humanizeError(code);
+      expect(human.title.length).toBeGreaterThan(0);
+      expect(human.guidance.length).toBeGreaterThan(0);
+      expect(human.title).not.toMatch(/[A-Za-z]{4,}/, `${code} leaks raw code`);
+    }
+  });
+
+  it("renders the next-step button for a typed error", () => {
+    useAppStore.setState({
+      session: null,
+      selectedTab: "welcome",
+      error: "authentication failed",
+      errorCode: "AiAuthFailed",
+    });
+    render(<App />);
+    expect(screen.getByText("API Key 无效")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重新配置" })).toBeInTheDocument();
+  });
+
   it("shows the protective dialog when recovery preserved user bytes", () => {
     const session = {
       root: "/p/novel",
