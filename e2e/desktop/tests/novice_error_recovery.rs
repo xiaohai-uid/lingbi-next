@@ -49,6 +49,7 @@ fn is_humanized_code(code: ErrorCode) -> bool {
             | ErrorCode::AiCancelled
             | ErrorCode::DocumentConflict
             | ErrorCode::CandidateStale
+            | ErrorCode::DiskWriteFailed
     )
 }
 

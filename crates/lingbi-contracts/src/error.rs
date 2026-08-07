@@ -7,6 +7,7 @@ pub enum ErrorCode {
     ProjectPathExists,
     ProjectNotFound,
     ProjectCorrupted,
+    DiskWriteFailed,
 
     DocumentNotFound,
     DocumentAlreadyExists,

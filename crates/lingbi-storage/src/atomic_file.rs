@@ -87,7 +87,7 @@ impl AtomicFileStore for DiskAtomicFileStore {
         if let Err(error) = write_result {
             let _ = fs::remove_file(&temp_path);
             return Err(AppError::new(
-                ErrorCode::ProjectCorrupted,
+                ErrorCode::DiskWriteFailed,
                 format!("temporary write failed: {error}"),
                 false,
             ));
@@ -96,7 +96,7 @@ impl AtomicFileStore for DiskAtomicFileStore {
         if let Err(error) = fs::rename(&temp_path, path) {
             let _ = fs::remove_file(&temp_path);
             return Err(AppError::new(
-                ErrorCode::ProjectCorrupted,
+                ErrorCode::DiskWriteFailed,
                 format!("atomic replacement failed: {error}"),
                 false,
             ));
@@ -104,7 +104,7 @@ impl AtomicFileStore for DiskAtomicFileStore {
 
         let verified = fs::read(path).map_err(|error| {
             AppError::new(
-                ErrorCode::ProjectCorrupted,
+                ErrorCode::DiskWriteFailed,
                 format!("post-write verification failed: {error}"),
                 false,
             )

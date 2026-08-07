@@ -164,6 +164,7 @@ describe("LingBi Next desktop shell", () => {
       "AiCancelled",
       "DocumentConflict",
       "CandidateStale",
+      "DiskWriteFailed",
     ];
     for (const code of codes) {
       const human = humanizeError(code);

@@ -56,6 +56,12 @@ export function humanizeError(code: string): HumanError {
         guidance: "生成已停止，你可以继续写作。",
         action: "retry",
       };
+    case "DiskWriteFailed":
+      return {
+        title: "保存失败",
+        guidance: "文件可能正被其他程序占用或变为只读，请检查后重试。",
+        action: "retry",
+      };
     case "DocumentConflict":
       return {
         title: "正文已在 AI 生成期间被修改",
