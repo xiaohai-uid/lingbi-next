@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import { humanizeError } from "./App";
 import { useAppStore } from "./store/useAppStore";
 
 vi.mock("@uiw/react-codemirror", () => ({
@@ -20,6 +21,12 @@ vi.mock("@uiw/react-codemirror", () => ({
   ),
 }));
 
+async function createNoviceProject(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: /开始写作/ }));
+  await user.type(screen.getByLabelText("作品名"), "我的小说");
+  await user.click(screen.getByRole("button", { name: "创建项目" }));
+}
+
 describe("LingBi Next desktop shell", () => {
   beforeEach(() => {
     useAppStore.setState({
@@ -31,19 +38,28 @@ describe("LingBi Next desktop shell", () => {
       generationTaskId: null,
       status: "",
       error: null,
+      errorCode: null,
       selectedTab: "welcome",
+      recentProjects: [],
+      providers: [],
+      providerTest: null,
+      aiConfigured: false,
+      lastExport: null,
+      streamingText: "",
     });
   });
 
-  it("creates a project and opens the editor", async () => {
+  it("first launch shows exactly three primary actions", () => {
+    render(<App />);
+    expect(screen.getByRole("button", { name: /开始写作/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /打开已有作品/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /连接 AI/ })).toBeInTheDocument();
+  });
+
+  it("creates a project with only a name (no path knowledge needed)", async () => {
     const user = userEvent.setup();
     render(<App />);
-
-    await user.clear(screen.getByLabelText("项目名"));
-    await user.type(screen.getByLabelText("项目名"), "测试小说");
-    await user.clear(screen.getByLabelText("项目目录"));
-    await user.type(screen.getByLabelText("项目目录"), "/tmp/MyNovel");
-    await user.click(screen.getByRole("button", { name: "创建项目" }));
+    await createNoviceProject(user);
 
     expect(await screen.findByLabelText("编辑器")).toHaveValue(
       "# 第一章\n\n浏览器预览模式",
@@ -52,15 +68,25 @@ describe("LingBi Next desktop shell", () => {
     expect(screen.getByRole("button", { name: "保存" })).toBeInTheDocument();
   });
 
+  it("first chapter appears automatically after creation", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await createNoviceProject(user);
+
+    expect(
+      await screen.findByRole("button", { name: "第一章" }),
+    ).toBeInTheDocument();
+  });
+
+  it("the custom save location is hidden behind advanced options", () => {
+    render(<App />);
+    expect(screen.queryByLabelText("自定义保存位置")).not.toBeInTheDocument();
+  });
+
   it("generates a candidate and adopts it into the editor", async () => {
     const user = userEvent.setup();
     render(<App />);
-
-    await user.clear(screen.getByLabelText("项目名"));
-    await user.type(screen.getByLabelText("项目名"), "测试小说");
-    await user.clear(screen.getByLabelText("项目目录"));
-    await user.type(screen.getByLabelText("项目目录"), "/tmp/MyNovel");
-    await user.click(screen.getByRole("button", { name: "创建项目" }));
+    await createNoviceProject(user);
     await user.click(screen.getByRole("button", { name: "生成" }));
 
     expect(
@@ -77,12 +103,7 @@ describe("LingBi Next desktop shell", () => {
   it("creates a second chapter and switches between chapters", async () => {
     const user = userEvent.setup();
     render(<App />);
-
-    await user.clear(screen.getByLabelText("项目名"));
-    await user.type(screen.getByLabelText("项目名"), "测试小说");
-    await user.clear(screen.getByLabelText("项目目录"));
-    await user.type(screen.getByLabelText("项目目录"), "/tmp/MyNovel");
-    await user.click(screen.getByRole("button", { name: "创建项目" }));
+    await createNoviceProject(user);
     await user.click(screen.getByRole("button", { name: "新建章节" }));
 
     expect(
@@ -94,5 +115,24 @@ describe("LingBi Next desktop shell", () => {
     expect(screen.getByLabelText("编辑器")).toHaveValue(
       "# 第一章\n\n浏览器预览模式",
     );
+  });
+
+  it("shows human-readable guidance for typed errors", () => {
+    expect(humanizeError("AiAuthFailed").title).toBe("API Key 无效");
+    expect(humanizeError("AiAuthFailed").guidance).toContain("API Key");
+    expect(humanizeError("AiNetworkError").title).toBe("网络连接失败");
+    expect(humanizeError("DocumentConflict").guidance).toContain("没有覆盖");
+  });
+
+  it("keeps the save status visible", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await createNoviceProject(user);
+    expect(await screen.findByText("已保存")).toBeInTheDocument();
+
+    const editor = screen.getByLabelText("编辑器");
+    await user.clear(editor);
+    await user.type(editor, "雨夜");
+    expect(screen.getByText("未保存")).toBeInTheDocument();
   });
 });

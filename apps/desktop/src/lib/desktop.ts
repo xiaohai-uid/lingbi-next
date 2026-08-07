@@ -44,6 +44,34 @@ export interface GeneratedCandidate {
   committed_at: string | null;
 }
 
+export interface RecentProject {
+  name: string;
+  root: string;
+  last_opened: string;
+}
+
+export interface ProviderDefinition {
+  id: string;
+  display_name: string;
+  protocol: string;
+  default_endpoint: string;
+  recommended_model: string;
+  models: string[];
+}
+
+export interface ProviderTestResult {
+  provider_id: string;
+  model_id: string;
+  ok: boolean;
+  latency_ms: number;
+  error: string | null;
+}
+
+export interface ExportResult {
+  format: string;
+  path: string;
+}
+
 export interface CommandError {
   code: string;
   message: string;
@@ -91,6 +119,7 @@ async function generateStreaming(
   chapterId: string,
   instruction: string,
   onStart?: (taskId: string) => void,
+  onDelta?: (content: string) => void,
 ): Promise<GeneratedCandidate> {
   return new Promise<GeneratedCandidate>((resolve, reject) => {
     let unlisten: (() => void) | undefined;
@@ -104,7 +133,9 @@ async function generateStreaming(
       } else if (event.payload.task_id !== taskId) {
         return;
       }
-      if (event.payload.type === "candidate" && event.payload.candidate) {
+      if (event.payload.type === "delta" && event.payload.content) {
+        onDelta?.(event.payload.content);
+      } else if (event.payload.type === "candidate" && event.payload.candidate) {
         cleanup();
         resolve(event.payload.candidate);
       } else if (event.payload.type === "error" && event.payload.error) {
@@ -112,7 +143,13 @@ async function generateStreaming(
         reject(event.payload.error);
       } else if (event.payload.type === "cancelled") {
         cleanup();
-        reject(toCommandError({ code: "AI_CANCELLED", message: "AI generation cancelled", retryable: false }));
+        reject(
+          toCommandError({
+            code: "AI_CANCELLED",
+            message: "AI generation cancelled",
+            retryable: false,
+          }),
+        );
       }
     })
       .then(async (unlistenFn) => {
@@ -132,13 +169,14 @@ async function generateStreaming(
 }
 
 export const desktop = {
-  async createProject(name: string, root: string): Promise<Session> {
+  async createProject(name: string, root?: string): Promise<Session> {
     if (inTauri()) {
       return invoke<Session>("project_create", { name, root });
     }
+    const resolvedRoot = root || name;
     const now = new Date().toISOString();
     const session: Session = {
-      root,
+      root: resolvedRoot,
       dirty: false,
       project: {
         id: crypto.randomUUID(),
@@ -158,8 +196,8 @@ export const desktop = {
         updated_at: now,
       },
     };
-    mockSessions.set(root, session);
-    mockDocuments.set(root, [session.current_document]);
+    mockSessions.set(resolvedRoot, session);
+    mockDocuments.set(resolvedRoot, [session.current_document]);
     mockContents.set(session.current_document.id, "# 第一章\n\n浏览器预览模式");
     return session;
   },
@@ -178,6 +216,24 @@ export const desktop = {
       return invoke<Session | null>("project_get_session");
     }
     return [...mockSessions.values()].at(-1) ?? null;
+  },
+
+  async projectDefaultRoot(name: string): Promise<string> {
+    if (inTauri()) {
+      return invoke<string>("project_default_root", { name });
+    }
+    return `文档/LingBi/${name}`;
+  },
+
+  async recentProjects(): Promise<RecentProject[]> {
+    if (inTauri()) {
+      return invoke<RecentProject[]>("recent_projects");
+    }
+    return [...mockSessions.entries()].map(([root, session]) => ({
+      name: session.project.name,
+      root,
+      last_opened: new Date().toISOString(),
+    }));
   },
 
   async listDocuments(): Promise<Document[]> {
@@ -208,7 +264,7 @@ export const desktop = {
       id: crypto.randomUUID(),
       project_id: projectId,
       title,
-      order: (mockDocuments.get(session.root)?.length ?? 0),
+      order: mockDocuments.get(session.root)?.length ?? 0,
       revision: 0,
       content_hash: "",
       created_at: now,
@@ -249,13 +305,54 @@ export const desktop = {
     };
   },
 
+  async exportDocument(format: string): Promise<ExportResult> {
+    if (inTauri()) {
+      return invoke<ExportResult>("document_export", { format });
+    }
+    return { format, path: `export/正文.${format}` };
+  },
+
+  async providerList(): Promise<ProviderDefinition[]> {
+    if (inTauri()) {
+      return invoke<ProviderDefinition[]>("provider_list");
+    }
+    return [
+      {
+        id: "openai",
+        display_name: "OpenAI",
+        protocol: "openai-compatible",
+        default_endpoint: "https://api.openai.com/v1/chat/completions",
+        recommended_model: "gpt-4o-mini",
+        models: ["gpt-4o-mini", "gpt-4o"],
+      },
+      {
+        id: "claude",
+        display_name: "Claude",
+        protocol: "anthropic",
+        default_endpoint: "https://api.anthropic.com/v1/messages",
+        recommended_model: "claude-3-5-haiku-latest",
+        models: ["claude-3-5-haiku-latest", "claude-3-5-sonnet-latest"],
+      },
+      {
+        id: "deepseek",
+        display_name: "DeepSeek",
+        protocol: "openai-compatible",
+        default_endpoint: "https://api.deepseek.com/v1/chat/completions",
+        recommended_model: "deepseek-chat",
+        models: ["deepseek-chat", "deepseek-reasoner"],
+      },
+    ];
+  },
+
   async providerConfigure(
+    providerId: string,
     key: string,
-    baseUrl: string,
-    model: string,
+    baseUrl?: string,
+    model?: string,
   ): Promise<void> {
     if (inTauri()) {
       await invoke("provider_configure", {
+        providerId,
         key,
         baseUrl,
         model,
@@ -263,13 +360,27 @@ export const desktop = {
     }
   },
 
+  async testConnection(): Promise<ProviderTestResult> {
+    if (inTauri()) {
+      return invoke<ProviderTestResult>("provider_test");
+    }
+    return {
+      provider_id: "openai",
+      model_id: "gpt-4o-mini",
+      ok: true,
+      latency_ms: 120,
+      error: null,
+    };
+  },
+
   async generate(
     chapterId: string,
     instruction: string,
     onStart?: (taskId: string) => void,
+    onDelta?: (content: string) => void,
   ): Promise<GeneratedCandidate> {
     if (inTauri()) {
-      return generateStreaming(chapterId, instruction, onStart);
+      return generateStreaming(chapterId, instruction, onStart, onDelta);
     }
     onStart?.("browser-mock-task");
     return {

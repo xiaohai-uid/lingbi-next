@@ -1,14 +1,19 @@
-use lingbi_ai::{AiError, CancellationToken, OpenAiCompatibleProvider};
+mod recent;
+
+use lingbi_ai::{AiError, CancellationToken};
 use lingbi_application::{
-    Candidate, CreateProjectRequest, DocumentApplicationService, GenerationService,
-    ProjectApplicationService, ProjectSessionSnapshot,
+    default_root_for, Candidate, CreateProjectRequest, DocumentApplicationService,
+    GenerationService, ProjectApplicationService, ProjectSessionSnapshot,
 };
 use lingbi_contracts::AppError;
 use lingbi_domain::{Document, Project};
+use lingbi_import_export::ImportExportService;
 use lingbi_security::{KeyringSecretStore, SecretStore, SecretString};
 use lingbi_writing::{GenerationManager, GenerationRequest, GenerationState};
+use recent::{RecentProject, RecentProjects};
 use serde::Serialize;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager, State};
 use uuid::Uuid;
@@ -22,6 +27,7 @@ struct DesktopState {
     generation: GenerationManager,
     generation_services: Mutex<HashMap<String, Arc<GenerationService>>>,
     generation_tokens: Mutex<HashMap<Uuid, CancellationToken>>,
+    recent: Mutex<Option<RecentProjects>>,
 }
 
 #[derive(Clone)]
@@ -113,14 +119,24 @@ enum GenerationEventDto {
 async fn project_create(
     state: State<'_, DesktopState>,
     name: String,
-    root: String,
+    root: Option<String>,
 ) -> Result<SessionDto, CommandErrorDto> {
+    // Novice flow: when no explicit root is provided, the app computes
+    // {Documents}/LingBi/<name> so the user never needs to understand paths.
+    let root = match root.as_deref().map(str::trim).filter(|root| !root.is_empty()) {
+        Some(explicit) => explicit.to_owned(),
+        None => default_root_for(&name)
+            .map_err(CommandErrorDto::from)?
+            .to_string_lossy()
+            .into_owned(),
+    };
+    let request = CreateProjectRequest {
+        name: name.clone(),
+        root: root.clone().into(),
+    };
     let snapshot = state
         .project_service
-        .create_project(CreateProjectRequest {
-            name,
-            root: root.clone().into(),
-        })
+        .create_project(request)
         .await
         .map_err(CommandErrorDto::from)?;
     let documents = Arc::new(DocumentApplicationService::new(root.clone()));
@@ -129,6 +145,7 @@ async fn project_create(
         .lock()
         .map_err(|_| command_error("LOCK_ERROR", "document service lock", false))?
         .insert(root.clone(), documents);
+    record_recent(&state, &name, &root);
     let current = CurrentSession { root, snapshot };
     let dto = SessionDto::from(current.clone());
     *state
@@ -154,6 +171,7 @@ async fn project_open(
         .lock()
         .map_err(|_| command_error("LOCK_ERROR", "document service lock", false))?
         .insert(root.clone(), documents);
+    record_recent(&state, &snapshot.project.name, &root);
     let current = CurrentSession { root, snapshot };
     let dto = SessionDto::from(current.clone());
     *state
@@ -161,6 +179,28 @@ async fn project_open(
         .lock()
         .map_err(|_| command_error("LOCK_ERROR", "session lock", false))? = Some(current);
     Ok(dto)
+}
+
+/// The default save location for a name-only project, so the UI can show
+/// "将保存到 文档/LingBi/我的小说" without requiring the user to type a path.
+#[tauri::command]
+async fn project_default_root(name: String) -> Result<String, CommandErrorDto> {
+    let root = default_root_for(&name).map_err(CommandErrorDto::from)?;
+    Ok(root.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+async fn recent_projects(
+    state: State<'_, DesktopState>,
+) -> Result<Vec<RecentProject>, CommandErrorDto> {
+    let recent = state
+        .recent
+        .lock()
+        .map_err(|_| command_error("LOCK_ERROR", "recent lock", false))?;
+    match recent.as_ref() {
+        Some(recent) => recent.load().map_err(CommandErrorDto::from),
+        None => Ok(Vec::new()),
+    }
 }
 
 #[tauri::command]
@@ -238,6 +278,60 @@ async fn document_save(
 }
 
 #[derive(Serialize)]
+struct ExportResultDto {
+    format: String,
+    path: String,
+}
+
+/// Export the current chapter to MD / TXT / DOCX inside the project's
+/// `export/` folder. Novice users never pick a destination.
+#[tauri::command]
+async fn document_export(
+    state: State<'_, DesktopState>,
+    format: String,
+) -> Result<ExportResultDto, CommandErrorDto> {
+    let root = current_root(&state)?;
+    let documents = document_service(&state, &root)?;
+    let session = state
+        .current
+        .lock()
+        .map_err(|_| command_error("LOCK_ERROR", "session lock", false))?
+        .clone()
+        .ok_or_else(|| command_error("NO_PROJECT_SESSION", "no project session", false))?;
+    let document = session.snapshot.current_document;
+    let content = documents
+        .read_document(document.id)
+        .await
+        .map_err(CommandErrorDto::from)?;
+    let export = ImportExportService::new(documents);
+    let export_dir = PathBuf::from(&root).join("export");
+    let base = export_dir.join(document.title.clone());
+    let format = format.to_ascii_lowercase();
+    let path = match format.as_str() {
+        "md" => export
+            .export_markdown(&content, &base.with_extension("md"))
+            .map_err(CommandErrorDto::from)?,
+        "txt" => export
+            .export_txt(&content, &base.with_extension("txt"))
+            .map_err(CommandErrorDto::from)?,
+        "docx" => export
+            .export_docx(&document.title, &content, &base.with_extension("docx"))
+            .map_err(CommandErrorDto::from)?,
+        other => {
+            return Err(command_error(
+                "UNSUPPORTED_EXPORT_FORMAT",
+                format!("unsupported export format: {other}"),
+                false,
+            ))
+        }
+    };
+    Ok(ExportResultDto {
+        format,
+        path: path.to_string_lossy().into_owned(),
+    })
+}
+
+#[derive(Serialize)]
 struct ProviderTestDto {
     provider_id: String,
     model_id: String,
@@ -246,13 +340,53 @@ struct ProviderTestDto {
     error: Option<String>,
 }
 
+#[derive(Serialize)]
+struct ProviderDefinitionDto {
+    id: String,
+    display_name: String,
+    protocol: String,
+    default_endpoint: String,
+    recommended_model: String,
+    models: Vec<String>,
+}
+
+/// The small set of AI services a novice user can pick from. The UI never
+/// shows raw endpoints/models; definitions carry the defaults.
+#[tauri::command]
+async fn provider_list() -> Result<Vec<ProviderDefinitionDto>, CommandErrorDto> {
+    Ok(lingbi_ai::provider_definitions()
+        .iter()
+        .map(|definition| ProviderDefinitionDto {
+            id: definition.id.to_owned(),
+            display_name: definition.display_name.to_owned(),
+            protocol: definition.protocol.as_str().to_owned(),
+            default_endpoint: definition.default_endpoint.to_owned(),
+            recommended_model: definition.recommended_model.to_owned(),
+            models: definition.models.iter().map(|model| (*model).to_owned()).collect(),
+        })
+        .collect())
+}
+
 #[tauri::command]
 async fn provider_configure(
     state: State<'_, DesktopState>,
+    provider_id: String,
     key: String,
     base_url: Option<String>,
     model: Option<String>,
 ) -> Result<(), CommandErrorDto> {
+    let definition = lingbi_ai::find_provider(&provider_id).ok_or_else(|| {
+        command_error(
+            "UNKNOWN_PROVIDER",
+            format!("unknown provider: {provider_id}"),
+            false,
+        )
+    })?;
+    state
+        .secrets
+        .put("provider_id", SecretString::new(provider_id))
+        .await
+        .map_err(CommandErrorDto::from)?;
     state
         .secrets
         .put("provider_key", SecretString::new(key))
@@ -262,9 +396,7 @@ async fn provider_configure(
         .secrets
         .put(
             "provider_base_url",
-            SecretString::new(
-                base_url.unwrap_or_else(|| "https://api.openai.com/v1/chat/completions".to_owned()),
-            ),
+            SecretString::new(base_url.unwrap_or_else(|| definition.default_endpoint.to_owned())),
         )
         .await
         .map_err(CommandErrorDto::from)?;
@@ -272,7 +404,7 @@ async fn provider_configure(
         .secrets
         .put(
             "provider_model",
-            SecretString::new(model.unwrap_or_else(|| "gpt-4o-mini".to_owned())),
+            SecretString::new(model.unwrap_or_else(|| definition.recommended_model.to_owned())),
         )
         .await
         .map_err(CommandErrorDto::from)
@@ -323,9 +455,16 @@ async fn generation_start(
     let task_service = service.clone();
     let task_cancel = cancel.clone();
     tokio::spawn(async move {
-        let result = task_service
-            .generate_with_cancel_stream(chapter_id, instruction, task_cancel.clone(), deltas)
-            .await;
+        // Producer: generation writes deltas into the channel as they
+        // arrive. Consumer: this task forwards them to the UI as they
+        // arrive (true streaming), while the generation is still running.
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel::<Result<Candidate, AppError>>();
+        let generation_task = tokio::spawn(async move {
+            let result = task_service
+                .generate_with_cancel_stream(chapter_id, instruction, task_cancel.clone(), deltas)
+                .await;
+            let _ = result_tx.send(result);
+        });
         while let Some(delta) = deltas_rx.recv().await {
             let _ = task_app.emit(
                 "generation-event",
@@ -335,6 +474,14 @@ async fn generation_start(
                 },
             );
         }
+        let result = result_rx
+            .await
+            .unwrap_or_else(|_| Err(AppError::new(
+                lingbi_contracts::ErrorCode::AiInvalidResponse,
+                "generation task ended without a result".to_owned(),
+                false,
+            )));
+        let _ = generation_task.await;
         let desktop_state = task_app.state::<DesktopState>();
         let _ = desktop_state
             .generation_tokens
@@ -440,6 +587,16 @@ async fn generation_status(
     Ok(state.generation.generation_status(task_id))
 }
 
+fn record_recent(state: &State<'_, DesktopState>, name: &str, root: &str) {
+    let recent_guard = match state.recent.lock() {
+        Ok(guard) => guard,
+        Err(_) => return,
+    };
+    if let Some(recent) = recent_guard.as_ref() {
+        let _ = recent.record(name, root);
+    }
+}
+
 fn current_root(state: &State<'_, DesktopState>) -> Result<String, CommandErrorDto> {
     state
         .current
@@ -517,25 +674,34 @@ async fn configured_provider(
                 false,
             )
         })?;
+    let provider_id = state
+        .secrets
+        .get("provider_id")
+        .await
+        .map_err(CommandErrorDto::from)?
+        .map(|value| value.expose().to_owned())
+        .unwrap_or_else(|| "openai".to_owned());
+    let definition = lingbi_ai::find_provider(&provider_id).ok_or_else(|| {
+        command_error("UNKNOWN_PROVIDER", format!("unknown provider: {provider_id}"), false)
+    })?;
     let base_url = state
         .secrets
         .get("provider_base_url")
         .await
         .map_err(CommandErrorDto::from)?
-        .map(|value| value.expose().to_owned())
-        .unwrap_or_else(|| "https://api.openai.com/v1/chat/completions".to_owned());
+        .map(|value| value.expose().to_owned());
     let model = state
         .secrets
         .get("provider_model")
         .await
         .map_err(CommandErrorDto::from)?
-        .map(|value| value.expose().to_owned())
-        .unwrap_or_else(|| "gpt-4o-mini".to_owned());
-    Ok(Arc::new(OpenAiCompatibleProvider::new(
+        .map(|value| value.expose().to_owned());
+    Ok(lingbi_ai::build_provider(
+        definition,
         key.expose(),
-        base_url,
-        model,
-    )))
+        base_url.as_deref(),
+        model.as_deref(),
+    ))
 }
 
 #[cfg(test)]
@@ -566,14 +732,28 @@ mod tests {
 pub fn run() {
     tauri::Builder::default()
         .manage(DesktopState::default())
+        .setup(|app| {
+            let state = app.state::<DesktopState>();
+            if let Ok(app_data) = app.path().app_data_dir() {
+                let recent = RecentProjects::new(app_data.join("recent_projects.json"));
+                if let Ok(mut guard) = state.recent.lock() {
+                    *guard = Some(recent);
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             project_create,
             project_open,
             project_get_session,
+            project_default_root,
+            recent_projects,
             document_list,
             document_create,
             document_open,
             document_save,
+            document_export,
+            provider_list,
             provider_configure,
             provider_test,
             generation_start,

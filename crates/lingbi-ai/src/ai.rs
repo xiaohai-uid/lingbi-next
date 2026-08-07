@@ -249,11 +249,19 @@ impl AiProvider for OpenAiCompatibleProvider {
 
             let mut stream = response.bytes_stream();
             let mut pending = String::new();
-            while let Some(chunk) = stream.next().await {
-                if cancel.is_cancelled() {
-                    yield Err(AiError::Cancelled);
-                    return;
-                }
+            loop {
+                // While waiting for the next network chunk we must also
+                // listen for cancellation, otherwise cancel only works
+                // between chunks and a silent server blocks forever.
+                let next = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => {
+                        yield Err(AiError::Cancelled);
+                        return;
+                    }
+                    next = stream.next() => next,
+                };
+                let Some(chunk) = next else { break };
                 let chunk = match chunk {
                     Ok(chunk) => chunk,
                     Err(_) => {
@@ -427,6 +435,113 @@ impl AiProvider for AnthropicProvider {
         &self.model
     }
 
+    /// Real Anthropic streaming with cancellation: deltas are emitted as
+    /// they arrive over SSE and a pending read is interrupted immediately
+    /// when the token is cancelled (tokio::select!).
+    fn stream_chat_with_cancel(&self, request: ChatRequest, cancel: CancellationToken) -> AiStream {
+        let client = self.client.clone();
+        let base_url = self.base_url.clone();
+        let model = self.model.clone();
+        let api_key = self.api_key.clone().unwrap_or_default();
+
+        Box::pin(stream! {
+            if api_key.is_empty() {
+                yield Err(AiError::NoApiKey);
+                return;
+            }
+            let (system, messages) = split_system(&request);
+            let body = serde_json::json!({
+                "model": model,
+                "max_tokens": request.max_tokens,
+                "stream": true,
+                "system": if system.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(system) },
+                "messages": messages,
+            });
+            let response = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => {
+                    yield Err(AiError::Cancelled);
+                    return;
+                }
+                result = client
+                    .post(&base_url)
+                    .header("x-api-key", &api_key)
+                    .header("anthropic-version", "2023-06-01")
+                    .json(&body)
+                    .send() => {
+                    match result {
+                        Ok(response) => response,
+                        Err(error) if error.is_timeout() => {
+                            yield Err(AiError::Timeout);
+                            return;
+                        }
+                        Err(_) => {
+                            yield Err(AiError::Network);
+                            return;
+                        }
+                    }
+                }
+            };
+            let status = response.status().as_u16();
+            if !response.status().is_success() {
+                yield Err(AiError::from_status(status));
+                return;
+            }
+
+            let mut stream = response.bytes_stream();
+            let mut pending = String::new();
+            loop {
+                let next = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => {
+                        yield Err(AiError::Cancelled);
+                        return;
+                    }
+                    next = stream.next() => next,
+                };
+                let Some(chunk) = next else { break };
+                let chunk = match chunk {
+                    Ok(chunk) => chunk,
+                    Err(_) => {
+                        yield Err(AiError::Network);
+                        return;
+                    }
+                };
+                pending.push_str(&String::from_utf8_lossy(&chunk));
+                let lines: Vec<String> = pending.split('\n').map(str::to_owned).collect();
+                pending = lines.last().cloned().unwrap_or_default().to_owned();
+                for line in lines.iter().take(lines.len().saturating_sub(1)) {
+                    let line = line.trim();
+                    if !line.starts_with("data: ") {
+                        continue;
+                    }
+                    let data = line.trim_start_matches("data: ").trim();
+                    if data == "[DONE]" {
+                        yield Ok(AiEvent::Completed);
+                        return;
+                    }
+                    let value: serde_json::Value = match serde_json::from_str(data) {
+                        Ok(value) => value,
+                        Err(_) => {
+                            yield Err(AiError::InvalidResponse);
+                            return;
+                        }
+                    };
+                    let Some(text) = value
+                        .pointer("/delta/text")
+                        .and_then(|value| value.as_str())
+                    else {
+                        continue;
+                    };
+                    if !text.is_empty() {
+                        yield Ok(AiEvent::ContentDelta(text.to_owned()));
+                    }
+                }
+            }
+            yield Ok(AiEvent::Completed);
+        })
+    }
+
     fn stream_chat(&self, request: ChatRequest) -> AiStream {
         let client = self.client.clone();
         let base_url = self.base_url.clone();
@@ -438,24 +553,7 @@ impl AiProvider for AnthropicProvider {
                 yield Err(AiError::NoApiKey);
                 return;
             }
-            let system = request
-                .messages
-                .iter()
-                .filter(|message| message.role == "system")
-                .map(|message| message.content.as_str())
-                .collect::<Vec<_>>()
-                .join("\n");
-            let messages: Vec<_> = request
-                .messages
-                .iter()
-                .filter(|message| message.role != "system")
-                .map(|message| {
-                    serde_json::json!({
-                        "role": message.role,
-                        "content": message.content,
-                    })
-                })
-                .collect();
+            let (system, messages) = split_system(&request);
             let body = serde_json::json!({
                 "model": model,
                 "max_tokens": request.max_tokens,
@@ -506,6 +604,28 @@ impl AiProvider for AnthropicProvider {
             yield Ok(AiEvent::Completed);
         })
     }
+}
+
+fn split_system(request: &ChatRequest) -> (String, Vec<serde_json::Value>) {
+    let system = request
+        .messages
+        .iter()
+        .filter(|message| message.role == "system")
+        .map(|message| message.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let messages: Vec<_> = request
+        .messages
+        .iter()
+        .filter(|message| message.role != "system")
+        .map(|message| {
+            serde_json::json!({
+                "role": message.role,
+                "content": message.content,
+            })
+        })
+        .collect();
+    (system, messages)
 }
 
 pub struct FakeProvider {
@@ -638,5 +758,126 @@ mod tests {
         token.cancel();
         assert!(token.is_cancelled());
         token.cancelled().await;
+    }
+
+    #[tokio::test]
+    async fn openai_compatible_cancel_interrupts_pending_stream_under_one_second() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buffer = [0u8; 8192];
+            let _ = socket.read(&mut buffer).await.expect("read request");
+            // One chunk, then hold the connection open (no Content-Length,
+            // Connection: close) so the client sees the delta and then
+            // blocks waiting for more data for up to 30s.
+            let first = "data: {\"choices\":[{\"delta\":{\"content\":\"第一段\"}}]}\n\n";
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{first}"
+            );
+            let _ = socket.write_all(head.as_bytes()).await;
+            let _ = socket.flush().await;
+            let mut hold = [0u8; 16];
+            let _ =
+                tokio::time::timeout(std::time::Duration::from_secs(30), socket.read(&mut hold))
+                    .await;
+        });
+
+        let provider = OpenAiCompatibleProvider::new(
+            "sk-test",
+            format!("http://{addr}/v1/chat/completions"),
+            "m",
+        );
+        let request = ChatRequest {
+            messages: vec![ChatMessage {
+                role: "user".to_owned(),
+                content: "hi".to_owned(),
+            }],
+            temperature: 0.0,
+            max_tokens: 10,
+        };
+        let cancel = CancellationToken::new();
+        let mut stream = provider.stream_chat_with_cancel(request, cancel.clone());
+
+        let first = stream.next().await.expect("first event").expect("ok");
+        assert_eq!(first, AiEvent::ContentDelta("第一段".to_owned()));
+
+        let started = Instant::now();
+        cancel.cancel();
+        let result = stream.next().await;
+        let elapsed = started.elapsed();
+
+        assert!(
+            matches!(result, Some(Err(AiError::Cancelled))),
+            "expected Cancelled, got {result:?}"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "cancel took {elapsed:?}, must be < 1s"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn anthropic_cancel_interrupts_pending_stream_under_one_second() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buffer = [0u8; 8192];
+            let _ = socket.read(&mut buffer).await.expect("read request");
+            let first = "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"第一段\"}}\n\n";
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{first}"
+            );
+            let _ = socket.write_all(head.as_bytes()).await;
+            let _ = socket.flush().await;
+            let mut hold = [0u8; 16];
+            let _ =
+                tokio::time::timeout(std::time::Duration::from_secs(30), socket.read(&mut hold))
+                    .await;
+        });
+
+        let provider = AnthropicProvider::new(
+            "sk-test",
+            format!("http://{addr}/v1/messages"),
+            "claude-3-5-haiku-latest",
+        );
+        let request = ChatRequest {
+            messages: vec![ChatMessage {
+                role: "user".to_owned(),
+                content: "hi".to_owned(),
+            }],
+            temperature: 0.0,
+            max_tokens: 10,
+        };
+        let cancel = CancellationToken::new();
+        let mut stream = provider.stream_chat_with_cancel(request, cancel.clone());
+
+        let first = stream.next().await.expect("first event").expect("ok");
+        assert_eq!(first, AiEvent::ContentDelta("第一段".to_owned()));
+
+        let started = Instant::now();
+        cancel.cancel();
+        let result = stream.next().await;
+        let elapsed = started.elapsed();
+
+        assert!(
+            matches!(result, Some(Err(AiError::Cancelled))),
+            "expected Cancelled, got {result:?}"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "cancel took {elapsed:?}, must be < 1s"
+        );
+        server.abort();
     }
 }

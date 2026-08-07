@@ -8,11 +8,23 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 use crate::document_service::DocumentApplicationService;
+use crate::project_locator::{default_root_for, ensure_root};
 
 #[derive(Debug, Clone)]
 pub struct CreateProjectRequest {
     pub name: String,
     pub root: PathBuf,
+}
+
+impl CreateProjectRequest {
+    /// Novice flow: the user only provides a name; the app computes
+    /// `{Documents}/LingBi/<name>` with an automatic `-N` suffix when the
+    /// folder already exists. The user never needs to understand paths.
+    pub fn named(name: impl Into<String>) -> Result<Self, AppError> {
+        let name = name.into();
+        let root = default_root_for(&name)?;
+        Ok(Self { name, root })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -38,13 +50,7 @@ impl ProjectApplicationService {
         request: CreateProjectRequest,
     ) -> Result<ProjectSessionSnapshot, AppError> {
         let root = request.root;
-        if root.exists() {
-            return Err(AppError::new(
-                ErrorCode::ProjectPathExists,
-                format!("project path already exists: {}", root.display()),
-                false,
-            ));
-        }
+        ensure_root(&root)?;
 
         fs::create_dir_all(root.join(".lingbi")).map_err(project_io_error)?;
         fs::create_dir_all(root.join("chapters")).map_err(project_io_error)?;

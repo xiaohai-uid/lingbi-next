@@ -15,10 +15,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+chrono = { version = "0.4", features = ["serde"] }
 lingbi-ai = { path = "../../../crates/lingbi-ai" }
 lingbi-application = { path = "../../../crates/lingbi-application" }
 lingbi-contracts = { path = "../../../crates/lingbi-contracts" }
 lingbi-domain = { path = "../../../crates/lingbi-domain" }
+lingbi-import-export = { path = "../../../crates/lingbi-import-export" }
 lingbi-security = { path = "../../../crates/lingbi-security" }
 lingbi-writing = { path = "../../../crates/lingbi-writing" }
 serde = { version = "1", features = ["derive"] }
@@ -26,3 +28,6 @@ serde_json = "1"
 tauri = { version = "2", features = [] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
 uuid = { version = "1", features = ["serde", "v4"] }
+
+[dev-dependencies]
+tempfile = "3"

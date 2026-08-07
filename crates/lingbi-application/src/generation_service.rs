@@ -352,3 +352,127 @@ mod tests {
         assert_eq!(generation.list(document_id).expect("list").len(), 10);
     }
 }
+
+#[cfg(test)]
+mod streaming_tests {
+    use super::*;
+    use crate::{CreateProjectRequest, DocumentApplicationService, ProjectApplicationService};
+    use lingbi_ai::AiStream;
+    use std::time::Instant;
+    use tempfile::TempDir;
+
+    async fn setup() -> (
+        TempDir,
+        crate::ProjectSessionSnapshot,
+        Arc<DocumentApplicationService>,
+    ) {
+        let temp = TempDir::new().expect("temp dir");
+        let service = ProjectApplicationService::new();
+        let snapshot = service
+            .create_project(CreateProjectRequest {
+                name: "测试小说".to_owned(),
+                root: temp.path().join("novel"),
+            })
+            .await
+            .expect("create");
+        let documents = Arc::new(DocumentApplicationService::new(temp.path().join("novel")));
+        (temp, snapshot, documents)
+    }
+
+    /// Provider that emits one ContentDelta every `delay`, then completes.
+    /// Mirrors the acceptance contract: "测试 Provider 每 500ms 返回一个 chunk".
+    struct ChunkedProvider {
+        chunks: Vec<String>,
+        delay: std::time::Duration,
+    }
+
+    impl ChunkedProvider {
+        fn new(chunks: Vec<&str>) -> Self {
+            Self {
+                chunks: chunks.into_iter().map(str::to_owned).collect(),
+                delay: std::time::Duration::from_millis(500),
+            }
+        }
+    }
+
+    impl AiProvider for ChunkedProvider {
+        fn provider_id(&self) -> &str {
+            "chunked"
+        }
+        fn model_id(&self) -> &str {
+            "chunked-model"
+        }
+        fn stream_chat(&self, _request: ChatRequest) -> AiStream {
+            let chunks = self.chunks.clone();
+            let delay = self.delay;
+            Box::pin(async_stream::stream! {
+                for chunk in chunks {
+                    tokio::time::sleep(delay).await;
+                    yield Ok(AiEvent::ContentDelta(chunk));
+                }
+                yield Ok(AiEvent::Completed);
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn first_delta_arrives_before_provider_completes() {
+        let (temp, snapshot, documents) = setup().await;
+        let provider = Arc::new(ChunkedProvider::new(vec![
+            "第一段",
+            "第二段",
+            "第三段",
+            "第四段",
+            "第五段",
+        ]));
+        let generation = GenerationService::new(temp.path().join("novel"), provider, documents);
+
+        let (deltas, mut deltas_rx) = tokio::sync::mpsc::unbounded_channel();
+        let started = Instant::now();
+        let generation_task = tokio::spawn({
+            let chapter_id = snapshot.current_document.id;
+            let service = generation;
+            async move {
+                service
+                    .generate_with_cancel_stream(
+                        chapter_id,
+                        "写一个雨夜开场",
+                        CancellationToken::new(),
+                        deltas,
+                    )
+                    .await
+            }
+        });
+
+        let first_delta = tokio::time::timeout(std::time::Duration::from_secs(3), deltas_rx.recv())
+            .await
+            .expect("first delta must arrive while generation is running")
+            .expect("delta channel open");
+        let first_delta_time = started.elapsed();
+
+        let candidate = generation_task
+            .await
+            .expect("generation task")
+            .expect("generate");
+        let completion_time = started.elapsed();
+
+        assert_eq!(first_delta, "第一段");
+        assert_eq!(candidate.content, "第一段第二段第三段第四段第五段");
+        assert!(
+            first_delta_time < completion_time,
+            "first delta at {first_delta_time:?} must arrive before completion at {completion_time:?}"
+        );
+        // The first 500ms chunk must be visible well before the stream ends
+        // (~2.5s); a buffered implementation would only deliver it at the end.
+        assert!(
+            first_delta_time < std::time::Duration::from_secs(1),
+            "first delta took {first_delta_time:?}, streaming is not real-time"
+        );
+        // With 5 chunks at 500ms, completion must take >= ~2.5s, proving
+        // the deltas were not buffered until the end.
+        assert!(
+            completion_time >= std::time::Duration::from_millis(2000),
+            "provider completion too fast: {completion_time:?}"
+        );
+    }
+}

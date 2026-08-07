@@ -3,7 +3,11 @@ import {
   desktop,
   toCommandError,
   type Document,
+  type ExportResult,
   type GeneratedCandidate,
+  type ProviderDefinition,
+  type ProviderTestResult,
+  type RecentProject,
   type Session,
 } from "../lib/desktop";
 
@@ -16,9 +20,18 @@ interface AppStore {
   generationTaskId: string | null;
   status: string;
   error: string | null;
+  errorCode: string | null;
   selectedTab: "welcome" | "editor";
-  createProject: (name: string, root: string) => Promise<void>;
+  recentProjects: RecentProject[];
+  providers: ProviderDefinition[];
+  providerTest: ProviderTestResult | null;
+  aiConfigured: boolean;
+  lastExport: ExportResult | null;
+  streamingText: string;
+  createProject: (name: string, root?: string) => Promise<void>;
   openProject: (root: string) => Promise<void>;
+  loadRecent: () => Promise<void>;
+  loadProviders: () => Promise<void>;
   saveDocument: () => Promise<void>;
   createChapter: () => Promise<void>;
   selectDocument: (document: Document) => Promise<void>;
@@ -26,6 +39,19 @@ interface AppStore {
   cancelGeneration: () => Promise<void>;
   adoptCandidate: () => Promise<void>;
   rejectCandidate: () => Promise<void>;
+  providerConfigure: (
+    providerId: string,
+    key: string,
+    baseUrl?: string,
+    model?: string,
+  ) => Promise<void>;
+  testProvider: () => Promise<void>;
+  exportDocument: (format: string) => Promise<void>;
+}
+
+function setError(set: (partial: Partial<AppStore>) => void, error: unknown) {
+  const parsed = toCommandError(error);
+  set({ error: parsed.message, errorCode: parsed.code });
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -37,7 +63,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
   generationTaskId: null,
   status: "",
   error: null,
+  errorCode: null,
   selectedTab: "welcome",
+  recentProjects: [],
+  providers: [],
+  providerTest: null,
+  aiConfigured: false,
+  lastExport: null,
+  streamingText: "",
 
   async createProject(name, root) {
     set({ status: "创建项目...", error: null });
@@ -52,8 +85,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
         selectedTab: "editor",
         status: "项目已创建",
       });
+      void get().loadRecent();
     } catch (error) {
-      set({ error: toCommandError(error).message, status: "" });
+      setError(set, error);
     }
   },
 
@@ -63,16 +97,73 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const session = await desktop.openProject(root);
       const content = await desktop.openDocument(session.current_document.id);
       const documents = await desktop.listDocuments();
-      set({ session, documents, documentContent: content, selectedTab: "editor", status: "项目已打开" });
+      set({
+        session,
+        documents,
+        documentContent: content,
+        selectedTab: "editor",
+        status: "项目已打开",
+      });
+      void get().loadRecent();
     } catch (error) {
-      set({ error: toCommandError(error).message, status: "" });
+      setError(set, error);
+    }
+  },
+
+  async loadRecent() {
+    try {
+      const recentProjects = await desktop.recentProjects();
+      set({ recentProjects });
+    } catch {
+      set({ recentProjects: [] });
+    }
+  },
+
+  async loadProviders() {
+    try {
+      const providers = await desktop.providerList();
+      set({ providers });
+    } catch {
+      set({ providers: [] });
+    }
+  },
+
+  async providerConfigure(providerId, key, baseUrl, model) {
+    set({ status: "保存 AI 设置...", error: null });
+    try {
+      await desktop.providerConfigure(providerId, key, baseUrl, model);
+      set({ aiConfigured: true, status: "AI 设置已保存" });
+    } catch (error) {
+      setError(set, error);
+    }
+  },
+
+  async testProvider() {
+    set({ providerTest: null, error: null, status: "测试连接..." });
+    try {
+      const providerTest = await desktop.testConnection();
+      set({
+        providerTest,
+        status: providerTest.ok ? "连接成功" : "连接失败",
+      });
+    } catch (error) {
+      set({
+        providerTest: {
+          provider_id: "",
+          model_id: "",
+          ok: false,
+          latency_ms: 0,
+          error: toCommandError(error).message,
+        },
+        status: "连接失败",
+      });
     }
   },
 
   async saveDocument() {
     const session = get().session;
     if (!session) return;
-    set({ status: "保存中...", error: null });
+    set({ status: "正在保存…", error: null });
     try {
       const document = await desktop.saveDocument(
         session.current_document.id,
@@ -91,7 +182,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
         status: "已保存",
       });
     } catch (error) {
-      set({ error: toCommandError(error).message, status: "" });
+      setError(set, error);
+      set({ status: "保存失败" });
     }
   },
 
@@ -119,7 +211,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         status: "章节已创建",
       }));
     } catch (error) {
-      set({ error: toCommandError(error).message, status: "" });
+      setError(set, error);
     }
   },
 
@@ -137,24 +229,36 @@ export const useAppStore = create<AppStore>((set, get) => ({
   async generate(instruction) {
     const session = get().session;
     if (!session) return;
-    set({ generating: true, error: null, status: "生成中...", generationTaskId: null });
+    set({
+      generating: true,
+      error: null,
+      status: "生成中...",
+      generationTaskId: null,
+      streamingText: "",
+    });
     try {
       const candidate = await desktop.generate(
         session.current_document.id,
         instruction,
         (taskId) => useAppStore.setState({ generationTaskId: taskId }),
+        (delta) =>
+          useAppStore.setState((state) => ({
+            streamingText: state.streamingText + delta,
+          })),
       );
       set({
         candidate,
         generating: false,
         generationTaskId: null,
+        streamingText: "",
         status: "候选已生成",
       });
     } catch (error) {
+      setError(set, error);
       set({
         generating: false,
         generationTaskId: null,
-        error: toCommandError(error).message,
+        streamingText: "",
         status: "",
       });
     }
@@ -165,9 +269,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (!taskId) return;
     try {
       await desktop.generationCancel(taskId);
-      set({ generating: false, generationTaskId: null, status: "已取消" });
+      set({
+        generating: false,
+        generationTaskId: null,
+        streamingText: "",
+        status: "已取消",
+      });
     } catch (error) {
-      set({ error: toCommandError(error).message, status: "" });
+      setError(set, error);
     }
   },
 
@@ -195,7 +304,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         status: "已采纳",
       });
     } catch (error) {
-      set({ error: toCommandError(error).message, status: "" });
+      setError(set, error);
     }
   },
 
@@ -206,7 +315,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
       await desktop.candidateReject(candidate.id);
       set({ candidate: null, status: "已拒绝" });
     } catch (error) {
-      set({ error: toCommandError(error).message, status: "" });
+      setError(set, error);
+    }
+  },
+
+  async exportDocument(format) {
+    set({ status: "导出中...", error: null });
+    try {
+      const lastExport = await desktop.exportDocument(format);
+      set({ status: `已导出 ${format.toUpperCase()}`, lastExport });
+    } catch (error) {
+      setError(set, error);
     }
   },
 }));
