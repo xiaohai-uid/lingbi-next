@@ -14,16 +14,10 @@ use lingbi_application::{
 };
 use lingbi_contracts::{AppError, ErrorCode};
 use lingbi_storage::DiskAtomicFileStore;
-use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use uuid::Uuid;
-
-fn hex_sha256(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
-}
 
 async fn create_project_at(root: &Path, name: &str) -> (ProjectApplicationService, Uuid) {
     let projects = ProjectApplicationService::new();
