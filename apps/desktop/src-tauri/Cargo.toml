@@ -21,6 +21,7 @@ lingbi-application = { path = "../../../crates/lingbi-application" }
 lingbi-contracts = { path = "../../../crates/lingbi-contracts" }
 lingbi-domain = { path = "../../../crates/lingbi-domain" }
 lingbi-import-export = { path = "../../../crates/lingbi-import-export" }
+lingbi-recovery = { path = "../../../crates/lingbi-recovery" }
 lingbi-security = { path = "../../../crates/lingbi-security" }
 lingbi-writing = { path = "../../../crates/lingbi-writing" }
 serde = { version = "1", features = ["derive"] }

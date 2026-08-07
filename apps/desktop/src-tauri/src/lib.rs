@@ -34,6 +34,8 @@ struct DesktopState {
 struct CurrentSession {
     root: String,
     snapshot: ProjectSessionSnapshot,
+    recovered: bool,
+    protected: bool,
 }
 
 #[derive(Serialize)]
@@ -42,6 +44,11 @@ struct SessionDto {
     current_document: Document,
     dirty: bool,
     root: String,
+    /// True when unfinished saves were safely recovered on open.
+    recovered: bool,
+    /// True when recovery detected external changes and protected the
+    /// user's bytes (never auto-overwritten).
+    protected: bool,
 }
 
 impl From<CurrentSession> for SessionDto {
@@ -51,6 +58,8 @@ impl From<CurrentSession> for SessionDto {
             current_document: value.snapshot.current_document,
             dirty: value.snapshot.dirty,
             root: value.root,
+            recovered: value.recovered,
+            protected: value.protected,
         }
     }
 }
@@ -146,7 +155,12 @@ async fn project_create(
         .map_err(|_| command_error("LOCK_ERROR", "document service lock", false))?
         .insert(root.clone(), documents);
     record_recent(&state, &name, &root);
-    let current = CurrentSession { root, snapshot };
+    let current = CurrentSession {
+        root,
+        snapshot,
+        recovered: false,
+        protected: false,
+    };
     let dto = SessionDto::from(current.clone());
     *state
         .current
@@ -160,6 +174,20 @@ async fn project_open(
     state: State<'_, DesktopState>,
     root: String,
 ) -> Result<SessionDto, CommandErrorDto> {
+    // Startup recovery: finish any interrupted save transactions BEFORE
+    // the user sees the project. Recovery never auto-overwrites content;
+    // when the user's bytes differ from the recorded state they are
+    // preserved and surfaced to the user in plain language.
+    let recovery = lingbi_recovery::RecoveryService::new(root.clone())
+        .recover_all()
+        .map_err(CommandErrorDto::from)?;
+    let recovered = recovery
+        .iter()
+        .any(|outcome| outcome.action == lingbi_recovery::RecoveryAction::Recovered);
+    let protected = recovery
+        .iter()
+        .any(|outcome| outcome.action == lingbi_recovery::RecoveryAction::PreserveUserBytes);
+
     let snapshot = state
         .project_service
         .open_project(root.clone().into())
@@ -172,7 +200,12 @@ async fn project_open(
         .map_err(|_| command_error("LOCK_ERROR", "document service lock", false))?
         .insert(root.clone(), documents);
     record_recent(&state, &snapshot.project.name, &root);
-    let current = CurrentSession { root, snapshot };
+    let current = CurrentSession {
+        root,
+        snapshot,
+        recovered,
+        protected,
+    };
     let dto = SessionDto::from(current.clone());
     *state
         .current

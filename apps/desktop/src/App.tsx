@@ -375,6 +375,35 @@ function Welcome() {
   );
 }
 
+function RecoveryBanner() {
+  const session = useAppStore((state) => state.session);
+  const recoveryDismissed = useAppStore((state) => state.recoveryDismissed);
+  const dismissRecovery = useAppStore((state) => state.dismissRecovery);
+  if (!session || recoveryDismissed) return null;
+
+  if (session.protected) {
+    return (
+      <div className="recovery-banner protected" role="status">
+        <strong>检测到上次异常关闭</strong>
+        <p>你的当前正文已经保护，没有被覆盖。</p>
+        <div className="actions">
+          <button onClick={dismissRecovery}>保留当前版本</button>
+          <button onClick={dismissRecovery}>查看恢复内容</button>
+        </div>
+      </div>
+    );
+  }
+  if (session.recovered) {
+    return (
+      <div className="recovery-banner" role="status">
+        <strong>已恢复上次未完成的保存</strong>
+        <button onClick={dismissRecovery}>知道了</button>
+      </div>
+    );
+  }
+  return null;
+}
+
 function SaveStatus() {
   const session = useAppStore((state) => state.session);
   const status = useAppStore((state) => state.status);
@@ -411,6 +440,22 @@ function Editor() {
       documentContent: content,
       session: session ? { ...session, dirty: true } : session,
     });
+
+  // Safe autosave: short debounce, revision/hash-guarded save (never
+  // overwrites external edits), and a no-op when the content already
+  // matches the last saved state.
+  useEffect(() => {
+    const session = useAppStore.getState().session;
+    const lastSavedContent = useAppStore.getState().lastSavedContent;
+    if (!session || documentContent === lastSavedContent) return;
+    const timer = window.setTimeout(() => {
+      const state = useAppStore.getState();
+      if (state.session && state.documentContent !== state.lastSavedContent) {
+        void state.saveDocument();
+      }
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [documentContent]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -449,6 +494,7 @@ function Editor() {
         </details>
       </aside>
       <section className="editor">
+        <RecoveryBanner />
         <header>
           <strong>{session.current_document.title}</strong>
           <div className="header-status">

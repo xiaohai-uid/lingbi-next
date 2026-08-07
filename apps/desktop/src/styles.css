@@ -262,6 +262,28 @@ select {
   gap: 10px;
 }
 
+.recovery-banner {
+  border: 1px solid #cfe3d3;
+  background: #eef7f0;
+  border-radius: 8px;
+  margin: 10px 16px 0;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.recovery-banner.protected {
+  border-color: #f0c4c0;
+  background: #fdf3f2;
+}
+
+.recovery-banner p {
+  margin: 0;
+  font-size: 13px;
+}
+
 .unsaved {
   color: #8a6d1a;
 }

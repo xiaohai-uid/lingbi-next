@@ -1868,6 +1868,7 @@ dependencies = [
  "lingbi-contracts",
  "lingbi-domain",
  "lingbi-import-export",
+ "lingbi-recovery",
  "lingbi-security",
  "lingbi-writing",
  "serde",
@@ -1912,6 +1913,21 @@ dependencies = [
  "lingbi-contracts",
  "lingbi-domain",
  "lingbi-security",
+ "lingbi-storage",
+ "serde",
+ "serde_json",
+ "sha2",
+ "uuid",
+]
+
+[[package]]
+name = "lingbi-recovery"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "lingbi-contracts",
+ "lingbi-domain",
+ "lingbi-mutation",
  "lingbi-storage",
  "serde",
  "serde_json",

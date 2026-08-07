@@ -28,6 +28,9 @@ interface AppStore {
   aiConfigured: boolean;
   lastExport: ExportResult | null;
   streamingText: string;
+  recoveryDismissed: boolean;
+  lastSavedContent: string;
+  dismissRecovery: () => void;
   createProject: (name: string, root?: string) => Promise<void>;
   openProject: (root: string) => Promise<void>;
   loadRecent: () => Promise<void>;
@@ -71,6 +74,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
   aiConfigured: false,
   lastExport: null,
   streamingText: "",
+  recoveryDismissed: false,
+  lastSavedContent: "",
+
+  dismissRecovery() {
+    set({ recoveryDismissed: true });
+  },
 
   async createProject(name, root) {
     set({ status: "创建项目...", error: null });
@@ -84,6 +93,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
         documentContent: content,
         selectedTab: "editor",
         status: "项目已创建",
+        recoveryDismissed: false,
+        lastSavedContent: content,
       });
       void get().loadRecent();
     } catch (error) {
@@ -103,6 +114,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
         documentContent: content,
         selectedTab: "editor",
         status: "项目已打开",
+        recoveryDismissed: false,
+        lastSavedContent: content,
       });
       void get().loadRecent();
     } catch (error) {
@@ -180,6 +193,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
           item.id === document.id ? document : item,
         ),
         status: "已保存",
+        lastSavedContent: get().documentContent,
       });
     } catch (error) {
       setError(set, error);
@@ -209,6 +223,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         documents: updatedDocuments,
         documentContent: content,
         status: "章节已创建",
+        lastSavedContent: content,
       }));
     } catch (error) {
       setError(set, error);
@@ -223,6 +238,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         : null,
       documentContent: content,
       status: "已切换",
+      lastSavedContent: content,
     }));
   },
 
@@ -302,6 +318,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         documentContent: candidate.content,
         candidate: null,
         status: "已采纳",
+        lastSavedContent: candidate.content,
       });
     } catch (error) {
       setError(set, error);

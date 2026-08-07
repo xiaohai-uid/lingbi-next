@@ -25,6 +25,8 @@ export interface Session {
   current_document: Document;
   dirty: boolean;
   root: string;
+  recovered?: boolean;
+  protected?: boolean;
 }
 
 export interface GeneratedCandidate {
@@ -178,6 +180,8 @@ export const desktop = {
     const session: Session = {
       root: resolvedRoot,
       dirty: false,
+      recovered: false,
+      protected: false,
       project: {
         id: crypto.randomUUID(),
         name,

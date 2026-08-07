@@ -124,6 +124,81 @@ describe("LingBi Next desktop shell", () => {
     expect(humanizeError("DocumentConflict").guidance).toContain("没有覆盖");
   });
 
+  it("shows the protective dialog when recovery preserved user bytes", () => {
+    const session = {
+      root: "/p/novel",
+      dirty: false,
+      recovered: false,
+      protected: true,
+      project: {
+        id: "p1",
+        name: "小说",
+        schema_version: 2,
+        created_at: "",
+        updated_at: "",
+      },
+      current_document: {
+        id: "d1",
+        project_id: "p1",
+        title: "第一章",
+        order: 0,
+        revision: 0,
+        content_hash: "",
+        created_at: "",
+        updated_at: "",
+      },
+    };
+    useAppStore.setState({
+      session,
+      documents: [session.current_document],
+      selectedTab: "editor",
+      recoveryDismissed: false,
+    });
+    render(<App />);
+
+    expect(screen.getByText("检测到上次异常关闭")).toBeInTheDocument();
+    expect(screen.getByText("你的当前正文已经保护，没有被覆盖。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "保留当前版本" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "查看恢复内容" })).toBeInTheDocument();
+    // No internal jargon for novices.
+    expect(screen.queryByText(/CommitIntent|SHA256|MutationIncident/)).toBeNull();
+  });
+
+  it("shows the recovered banner after safe recovery", () => {
+    const session = {
+      root: "/p/novel",
+      dirty: false,
+      recovered: true,
+      protected: false,
+      project: {
+        id: "p1",
+        name: "小说",
+        schema_version: 2,
+        created_at: "",
+        updated_at: "",
+      },
+      current_document: {
+        id: "d1",
+        project_id: "p1",
+        title: "第一章",
+        order: 0,
+        revision: 0,
+        content_hash: "",
+        created_at: "",
+        updated_at: "",
+      },
+    };
+    useAppStore.setState({
+      session,
+      documents: [session.current_document],
+      selectedTab: "editor",
+      recoveryDismissed: false,
+    });
+    render(<App />);
+
+    expect(screen.getByText("已恢复上次未完成的保存")).toBeInTheDocument();
+  });
+
   it("keeps the save status visible", async () => {
     const user = userEvent.setup();
     render(<App />);
