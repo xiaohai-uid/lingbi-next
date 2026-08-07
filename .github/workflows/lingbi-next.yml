@@ -3,9 +3,13 @@
 # Windows is the P0 product platform. The product cannot advance to Public
 # Beta until the Windows Product Gate passes end to end.
 #
-#   windows-core-gate    → the only product Release Gate. Any step failure
-#                          prints "Windows Product Gate = FAIL".
-#   linux-portability    → cross-platform Core/Web portability only.
+#   windows-core-gate     → the only product Release Gate. Any step failure
+#                           prints "Windows Product Gate = FAIL".
+#   windows-desktop-e2e   → real Windows Tauri binary E2E (tauri-driver +
+#                           Edge WebDriver/WebView2). Explicit execution,
+#                           never skipped. passed > 0, failed = 0,
+#                           skipped = 0 required.
+#   linux-portability     → cross-platform Core/Web portability only.
 #
 # IMPORTANT:
 #   Linux PASS ≠ Windows Product PASS.
@@ -50,7 +54,7 @@ jobs:
         run: |
           cargo fmt --all -- --check
           cargo clippy --workspace --all-targets -- -D warnings
-          cargo test --workspace
+          cargo test --workspace --exclude lingbi-e2e-desktop-real
         shell: pwsh
 
       - name: Go tests and vet
@@ -83,6 +87,57 @@ jobs:
           exit 1
         shell: pwsh
 
+  windows-desktop-e2e:
+    name: Windows Desktop E2E
+    runs-on: windows-latest
+    needs: windows-core-gate
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Install frontend deps
+        run: pnpm install
+        shell: pwsh
+
+      - name: Build real Tauri release binary
+        run: |
+          cd apps/desktop
+          pnpm tauri build
+        shell: pwsh
+
+      - name: Install tauri-driver
+        run: cargo install tauri-driver --locked
+        shell: pwsh
+
+      - name: Run real Windows desktop E2E (explicit, never skipped)
+        run: |
+          $output = cargo test -p lingbi-e2e-desktop-real --test windows_desktop_e2e -- --test-threads=1 2>&1
+          $output | Select-Object -Last 60
+          $summary = ($output | Select-String 'test result:').Line
+          Write-Host "=============================================="
+          Write-Host "Windows Desktop E2E summary: $summary"
+          $passed = 0; $failed = 0; $skipped = 0
+          if ($summary -match '(\d+) passed') { $passed = [int]$matches[1] }
+          if ($summary -match '(\d+) failed') { $failed = [int]$matches[1] }
+          if ($summary -match '(\d+) ignored') { $skipped = [int]$matches[1] }
+          Write-Host "Windows Desktop E2E passed=$passed failed=$failed skipped=$skipped"
+          if ($passed -lt 1 -or $failed -ne 0 -or $skipped -ne 0) {
+            Write-Host "Windows Desktop E2E = FAIL (need passed > 0, failed = 0, skipped = 0)"
+            exit 1
+          }
+          Write-Host "Windows Desktop E2E = PASS"
+          exit 0
+        shell: pwsh
+
   linux-portability:
     name: Linux Portability
     runs-on: ubuntu-latest
@@ -108,10 +163,10 @@ jobs:
       # Linux only protects cross-platform Core merges. It does NOT approve
       # a product release: Linux PASS ≠ Windows Product PASS.
       - name: Rust core compile
-        run: cargo build --workspace
+        run: cargo build --workspace --exclude lingbi-e2e-desktop-real
 
       - name: Rust unit tests
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude lingbi-e2e-desktop-real
 
       - name: Go tests
         run: |

@@ -1113,6 +1113,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lingbi-e2e-desktop-real"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "lingbi-ffi"
 version = "0.1.0"
 dependencies = [

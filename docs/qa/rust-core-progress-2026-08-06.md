@@ -133,8 +133,12 @@ PASS
 cargo test -p lingbi-e2e-desktop
 1 passed
 
-cargo test -p lingbi-e2e-desktop --test real_desktop_binary_e2e -- --ignored
-1 passed (real Tauri release binary, TCP-only Xvfb; opt-in so the CI gate does not need a desktop session)
+cargo test -p lingbi-e2e-desktop-real --test linux_compat_e2e
+1 passed (compat) / explicit LINUX_COMPAT_SKIP when infra missing
+
+cargo test -p lingbi-e2e-desktop-real --test windows_desktop_e2e
+Windows product E2E via tauri-driver + Edge WebDriver; runs in the
+windows-desktop-e2e CI job (never #[ignore]d, never skipped)
 
 cargo test --workspace --lib
 all tests pass
