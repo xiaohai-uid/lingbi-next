@@ -415,6 +415,8 @@ async fn provider_configure(
     key: String,
     base_url: Option<String>,
     model: Option<String>,
+    temperature: Option<f32>,
+    max_tokens: Option<u32>,
 ) -> Result<(), CommandErrorDto> {
     let definition = lingbi_ai::find_provider(&provider_id).ok_or_else(|| {
         command_error(
@@ -446,6 +448,22 @@ async fn provider_configure(
         .put(
             "provider_model",
             SecretString::new(model.unwrap_or_else(|| definition.recommended_model.to_owned())),
+        )
+        .await
+        .map_err(CommandErrorDto::from)?;
+    state
+        .secrets
+        .put(
+            "provider_temperature",
+            SecretString::new(temperature.unwrap_or(0.7).to_string()),
+        )
+        .await
+        .map_err(CommandErrorDto::from)?;
+    state
+        .secrets
+        .put(
+            "provider_max_tokens",
+            SecretString::new(max_tokens.unwrap_or(2048).to_string()),
         )
         .await
         .map_err(CommandErrorDto::from)
@@ -534,6 +552,9 @@ async fn generation_start(
     let task_app = app.clone();
     let task_service = service.clone();
     let task_cancel = cancel.clone();
+    let settings = generation_settings(&state)
+        .await
+        .map_err(CommandErrorDto::from)?;
     tokio::spawn(async move {
         // Producer: generation writes deltas into the channel as they
         // arrive. Consumer: this task forwards them to the UI as they
@@ -542,7 +563,13 @@ async fn generation_start(
         let generation_cancel = task_cancel.clone();
         let generation_task = tokio::spawn(async move {
             let result = task_service
-                .generate_with_cancel_stream(chapter_id, instruction, generation_cancel, deltas)
+                .generate_with_settings(
+                    chapter_id,
+                    instruction,
+                    generation_cancel,
+                    deltas,
+                    settings,
+                )
                 .await;
             let _ = result_tx.send(result);
         });
@@ -666,6 +693,29 @@ async fn generation_status(
 ) -> Result<Option<GenerationState>, CommandErrorDto> {
     let task_id = parse_uuid(&task_id)?;
     Ok(state.generation.generation_status(task_id))
+}
+
+/// 高级设置 (Task 8): temperature / max tokens, persisted with the rest
+/// of the provider configuration.
+async fn generation_settings(
+    state: &State<'_, DesktopState>,
+) -> Result<lingbi_application::GenerationSettings, AppError> {
+    let temperature = state
+        .secrets
+        .get("provider_temperature")
+        .await?
+        .and_then(|value| value.expose().parse::<f32>().ok())
+        .unwrap_or(0.7);
+    let max_tokens = state
+        .secrets
+        .get("provider_max_tokens")
+        .await?
+        .and_then(|value| value.expose().parse::<u32>().ok())
+        .unwrap_or(2048);
+    Ok(lingbi_application::GenerationSettings {
+        temperature,
+        max_tokens,
+    })
 }
 
 fn record_recent(state: &State<'_, DesktopState>, name: &str, root: &str) {

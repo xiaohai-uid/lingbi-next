@@ -45,12 +45,14 @@ impl GenerationService {
             .await
     }
 
-    pub async fn generate_with_cancel_stream(
+    /// Generation with explicit 高级设置 (temperature / max tokens).
+    pub async fn generate_with_settings(
         &self,
         chapter_id: Uuid,
         instruction: impl Into<String>,
         cancel: CancellationToken,
         deltas: UnboundedSender<String>,
+        settings: GenerationSettings,
     ) -> Result<Candidate, AppError> {
         let document = self.documents.get_document(chapter_id)?;
         let instruction = instruction.into();
@@ -65,8 +67,8 @@ impl GenerationService {
                     content: instruction.clone(),
                 },
             ],
-            temperature: 0.7,
-            max_tokens: 2048,
+            temperature: settings.temperature,
+            max_tokens: settings.max_tokens,
         };
 
         let mut stream = self
@@ -74,8 +76,6 @@ impl GenerationService {
             .stream_chat_with_cancel(request, cancel.clone());
         let mut content = String::new();
         while let Some(event) = stream.next().await {
-            // Belt and braces: even if the provider does not honor the
-            // token, the service stops the moment cancellation arrives.
             if cancel.is_cancelled() {
                 return Err(AppError::new(
                     ErrorCode::AiCancelled,
@@ -122,6 +122,22 @@ impl GenerationService {
         Ok(candidate)
     }
 
+    pub async fn generate_with_cancel_stream(
+        &self,
+        chapter_id: Uuid,
+        instruction: impl Into<String>,
+        cancel: CancellationToken,
+        deltas: UnboundedSender<String>,
+    ) -> Result<Candidate, AppError> {
+        self.generate_with_settings(
+            chapter_id,
+            instruction,
+            cancel,
+            deltas,
+            GenerationSettings::default(),
+        )
+        .await
+    }
     pub fn list(&self, document_id: Uuid) -> Result<Vec<Candidate>, AppError> {
         Ok(self
             .candidates
@@ -339,6 +355,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn generation_settings_flow_into_the_provider_request() {
+        let (temp, snapshot, documents) = setup().await;
+        let provider = Arc::new(RecordingProvider::default());
+        let generation =
+            GenerationService::new(temp.path().join("novel"), provider.clone(), documents);
+
+        generation
+            .generate_with_settings(
+                snapshot.current_document.id,
+                "写",
+                CancellationToken::new(),
+                tokio::sync::mpsc::unbounded_channel().0,
+                GenerationSettings {
+                    temperature: 0.3,
+                    max_tokens: 123,
+                },
+            )
+            .await
+            .expect("generate");
+
+        let request = provider
+            .requests
+            .lock()
+            .expect("lock")
+            .last()
+            .cloned()
+            .expect("request");
+        assert_eq!(request.temperature, 0.3);
+        assert_eq!(request.max_tokens, 123);
+    }
+
+    #[tokio::test]
+    async fn default_generation_uses_recommended_settings() {
+        let (temp, snapshot, documents) = setup().await;
+        let provider = Arc::new(RecordingProvider::default());
+        let generation =
+            GenerationService::new(temp.path().join("novel"), provider.clone(), documents);
+
+        generation
+            .generate(snapshot.current_document.id, "写")
+            .await
+            .expect("generate");
+
+        let request = provider
+            .requests
+            .lock()
+            .expect("lock")
+            .last()
+            .cloned()
+            .expect("request");
+        assert_eq!(request.temperature, 0.7);
+        assert_eq!(request.max_tokens, 2048);
+    }
+
+    #[tokio::test]
     async fn adopt_goes_through_the_single_unified_mutation_path() {
         let (temp, snapshot, documents) = setup().await;
         let provider = Arc::new(FakeProvider::new("统一路径正文"));
@@ -533,5 +604,45 @@ mod streaming_tests {
             completion_time >= std::time::Duration::from_millis(2000),
             "provider completion too fast: {completion_time:?}"
         );
+    }
+}
+
+/// Settings a novice user can override in 高级设置 (Task 8).
+#[derive(Debug, Clone, Copy)]
+pub struct GenerationSettings {
+    pub temperature: f32,
+    pub max_tokens: u32,
+}
+
+impl Default for GenerationSettings {
+    fn default() -> Self {
+        Self {
+            temperature: 0.7,
+            max_tokens: 2048,
+        }
+    }
+}
+
+/// Records every ChatRequest so tests can prove settings flow through.
+#[cfg(test)]
+#[derive(Default)]
+struct RecordingProvider {
+    requests: std::sync::Mutex<Vec<ChatRequest>>,
+}
+
+#[cfg(test)]
+impl AiProvider for RecordingProvider {
+    fn provider_id(&self) -> &str {
+        "recording"
+    }
+    fn model_id(&self) -> &str {
+        "recording-model"
+    }
+    fn stream_chat(&self, request: ChatRequest) -> lingbi_ai::AiStream {
+        self.requests.lock().expect("lock").push(request.clone());
+        Box::pin(async_stream::stream! {
+            yield Ok(AiEvent::ContentDelta("正文".to_owned()));
+            yield Ok(AiEvent::Completed);
+        })
     }
 }

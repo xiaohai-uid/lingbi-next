@@ -49,6 +49,8 @@ interface AppStore {
     key: string,
     baseUrl?: string,
     model?: string,
+    temperature?: number,
+    maxTokens?: number,
   ) => Promise<void>;
   testProvider: () => Promise<void>;
   exportDocument: (format: string) => Promise<void>;
@@ -157,10 +159,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
-  async providerConfigure(providerId, key, baseUrl, model) {
+  async providerConfigure(providerId, key, baseUrl, model, temperature, maxTokens) {
     set({ status: "保存 AI 设置...", error: null });
     try {
-      await desktop.providerConfigure(providerId, key, baseUrl, model);
+      await desktop.providerConfigure(
+        providerId,
+        key,
+        baseUrl,
+        model,
+        temperature,
+        maxTokens,
+      );
       set({ aiConfigured: true, status: "AI 设置已保存" });
     } catch (error) {
       setError(set, error);

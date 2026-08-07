@@ -124,6 +124,34 @@ describe("LingBi Next desktop shell", () => {
     expect(humanizeError("DocumentConflict").guidance).toContain("没有覆盖");
   });
 
+  it("高级设置 exposes 协议/温度/最大 tokens and persists them", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: /连接 AI/ }));
+    await user.type(screen.getByLabelText("API Key"), "sk-test");
+
+    // Fields are inside the collapsed 高级设置 details until expanded.
+    const details = screen.getByText("高级设置").closest("details");
+    expect(details).not.toBeNull();
+    expect(details!.hasAttribute("open")).toBe(false);
+    const summary = screen.getByText("高级设置");
+    await user.click(summary);
+    expect(details!.hasAttribute("open")).toBe(true);
+
+    expect(screen.getByLabelText("协议")).toHaveValue("OpenAI 兼容");
+    await user.clear(screen.getByLabelText("温度"));
+    await user.type(screen.getByLabelText("温度"), "0.3");
+    await user.clear(screen.getByLabelText("最大 tokens"));
+    await user.type(screen.getByLabelText("最大 tokens"), "123");
+
+    await user.click(screen.getByRole("button", { name: "保存设置" }));
+
+    const { lastProviderConfig } = await import("./lib/desktop");
+    expect(lastProviderConfig?.temperature).toBe(0.3);
+    expect(lastProviderConfig?.maxTokens).toBe(123);
+    expect(lastProviderConfig?.providerId).toBe("openai");
+  });
+
   it("maps every typed AI/disk error to Chinese guidance with a next step", () => {
     const codes = [
       "AiAuthFailed",

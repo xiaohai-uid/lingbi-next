@@ -117,6 +117,14 @@ const mockSessions = new Map<string, Session>();
 const mockDocuments = new Map<string, Document[]>();
 const mockContents = new Map<string, string>();
 const mockCandidates = new Map<string, GeneratedCandidate[]>();
+export let lastProviderConfig: {
+  providerId: string;
+  key: string;
+  baseUrl?: string;
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+} | null = null;
 
 async function generateStreaming(
   chapterId: string,
@@ -354,6 +362,8 @@ export const desktop = {
     key: string,
     baseUrl?: string,
     model?: string,
+    temperature?: number,
+    maxTokens?: number,
   ): Promise<void> {
     if (inTauri()) {
       await invoke("provider_configure", {
@@ -361,8 +371,19 @@ export const desktop = {
         key,
         baseUrl,
         model,
+        temperature,
+        maxTokens,
       });
+      return;
     }
+    lastProviderConfig = {
+      providerId,
+      key,
+      baseUrl,
+      model,
+      temperature,
+      maxTokens,
+    };
   },
 
   async testConnection(): Promise<ProviderTestResult> {

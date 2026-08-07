@@ -110,6 +110,8 @@ function Welcome() {
   const [advancedAi, setAdvancedAi] = useState(false);
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
+  const [temperature, setTemperature] = useState("0.7");
+  const [maxTokens, setMaxTokens] = useState("2048");
 
   const createProject = useAppStore((state) => state.createProject);
   const openProject = useAppStore((state) => state.openProject);
@@ -325,6 +327,41 @@ function Welcome() {
                   onChange={(event) => setModel(event.target.value)}
                 />
               </label>
+              <label>
+                协议
+                <input
+                  aria-label="协议"
+                  value={
+                    selectedProvider?.protocol === "anthropic"
+                      ? "Anthropic"
+                      : "OpenAI 兼容"
+                  }
+                  readOnly
+                />
+              </label>
+              <label>
+                温度
+                <input
+                  aria-label="温度"
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  max="2"
+                  value={temperature}
+                  onChange={(event) => setTemperature(event.target.value)}
+                />
+              </label>
+              <label>
+                最大 tokens
+                <input
+                  aria-label="最大 tokens"
+                  type="number"
+                  step="1"
+                  min="1"
+                  value={maxTokens}
+                  onChange={(event) => setMaxTokens(event.target.value)}
+                />
+              </label>
             </details>
             <div className="actions">
               <button
@@ -335,6 +372,12 @@ function Welcome() {
                     apiKey.trim(),
                     advancedAi && baseUrl.trim() ? baseUrl.trim() : undefined,
                     advancedAi && model.trim() ? model.trim() : undefined,
+                    advancedAi && temperature.trim()
+                      ? Number(temperature.trim())
+                      : undefined,
+                    advancedAi && maxTokens.trim()
+                      ? Number(maxTokens.trim())
+                      : undefined,
                   )
                 }
               >
