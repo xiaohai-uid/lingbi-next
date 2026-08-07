@@ -141,7 +141,7 @@ describe("LingBi Next desktop shell", () => {
       const human = humanizeError(code);
       expect(human.title.length).toBeGreaterThan(0);
       expect(human.guidance.length).toBeGreaterThan(0);
-      expect(human.title).not.toMatch(/[A-Za-z]{4,}/, `${code} leaks raw code`);
+      expect(human.title).not.toMatch(/[A-Za-z]{4,}/);
     }
   });
 
