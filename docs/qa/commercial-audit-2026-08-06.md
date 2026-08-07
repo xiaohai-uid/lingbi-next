@@ -5,8 +5,14 @@ Date: 2026-08-06
 ## Classification
 
 ```text
-Public Beta
+Internal Alpha
 ```
+
+Changed 2026-08-07 (Task 23): the previous "Public Beta / Known failures:
+NONE" framing was removed because the Windows Product Gate is not yet
+complete. Until then the product is Internal Alpha; see
+docs/qa/release-gates.md and docs/release/release-order.md.
+
 
 Not Commercial GA. The following external gates are not yet satisfied:
 
@@ -42,8 +48,15 @@ Not Commercial GA. The following external gates are not yet satisfied:
 ## Known failures
 
 ```text
-NONE
+UNKNOWN until the Windows Product Gate completes
 ```
+
+No "NONE" claim may be made while Windows CI / Windows desktop E2E /
+clean-machine acceptance are not all green. Evidence is strictly labeled
+UNIT / INTEGRATION / WINDOWS_CI / WINDOWS_DESKTOP_E2E /
+WINDOWS_CLEAN_MACHINE / MACOS_COMPATIBILITY / LINUX_PORTABILITY /
+LIVE_PROVIDER (docs/qa/release-gates.md).
+
 
 ## External blockers
 

@@ -18,4 +18,4 @@ Formal Windows GA requires:
 - assessed SmartScreen/reputation behavior
 
 If no valid commercial signing solution is available, the release must be
-classified as Public Beta, not Commercial GA.
+classified as Internal Alpha, not Commercial GA.

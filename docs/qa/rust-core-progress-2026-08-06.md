@@ -32,7 +32,7 @@ Date: 2026-08-06
 - Milestone 26: Failing-fast CI gate across Rust, frontend, website, Go, and Tauri
 - Milestone 28: Privacy baseline allow/deny policy
 - Milestone 27: Signing policy for code, updater, and entitlement trust roots
-- Commercial readiness audit: Public Beta classification and external gate list
+- Commercial readiness audit: Internal Alpha classification (was Public Beta; reclassified 2026-08-07, Task 23) and external gate list
 - Milestone 29: shared Project V2 fixture compatibility, including Rust edit and Flutter reopen proof
 - Milestone 30: Project V2 C ABI bridge plus flutter_rust_bridge project parsing and document storage with Cargokit Windows bundling, followed by the 15 local fix tasks on `milestone_30_continue_mutation`
 
