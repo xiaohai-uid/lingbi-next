@@ -117,6 +117,18 @@ impl DocumentApplicationService {
             body_relative_path: relative.to_string_lossy().into_owned(),
         };
         self.transactions.begin(&transaction)?;
+        // Snapshot/version (Task 21): archive the CURRENT body under
+        // .lingbi/versions/<document>-r<revision>.md before replacing it,
+        // so every previous version stays recoverable. Best-effort — a
+        // snapshot failure must never block the save itself.
+        if let Ok(current) = self.store.read(&path)
+            && let Ok(snapshot_path) = snapshot_path(&self.root, document_id, document.revision)
+        {
+            if let Some(parent) = snapshot_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = self.store.write_atomic(&snapshot_path, &current, None);
+        }
         let content_hash =
             self.store
                 .write_atomic(&path, content.as_bytes(), Some(&document.content_hash))?;
@@ -598,4 +610,16 @@ mod tests {
         root.join(".lingbi/transactions")
             .join(format!("{tx_id}.json"))
     }
+}
+
+/// `.lingbi/versions/<document_id>-r<revision>.md` — the archived body of
+/// the given document revision (Task 21 snapshot/version).
+fn snapshot_path(
+    root: &std::path::Path,
+    document_id: Uuid,
+    revision: u64,
+) -> Result<std::path::PathBuf, AppError> {
+    Ok(root
+        .join(".lingbi/versions")
+        .join(format!("{document_id}-r{revision}.md")))
 }

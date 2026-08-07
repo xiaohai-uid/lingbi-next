@@ -113,6 +113,48 @@ async fn same_name_project_gets_unique_default_root() {
 }
 
 #[tokio::test]
+async fn save_keeps_a_snapshot_of_each_previous_version() {
+    let temp = TempDir::new().expect("temp dir");
+    let root = temp.path().join("novel");
+    let (_, document_id) = create_project_at(&root, "novel").await;
+    let documents = DocumentApplicationService::new(&root);
+
+    documents
+        .save_document(document_id, 0, "第一版正文")
+        .await
+        .expect("save v1");
+    documents
+        .save_document(document_id, 1, "第二版正文")
+        .await
+        .expect("save v2");
+
+    let versions = root.join(".lingbi/versions");
+    assert!(
+        versions.join(format!("{document_id}-r0.md")).exists(),
+        "r0 snapshot must exist"
+    );
+    assert!(
+        versions.join(format!("{document_id}-r1.md")).exists(),
+        "r1 snapshot must exist"
+    );
+    assert_eq!(
+        std::fs::read_to_string(versions.join(format!("{document_id}-r0.md"))).expect("read r0"),
+        "# 第一章\n\n",
+        "r0 snapshot is the pristine first chapter"
+    );
+    assert_eq!(
+        std::fs::read_to_string(versions.join(format!("{document_id}-r1.md"))).expect("read r1"),
+        "第一版正文",
+        "r1 snapshot is the content before the second save"
+    );
+    assert_eq!(
+        documents.read_document(document_id).await.expect("read"),
+        "第二版正文",
+        "snapshots must not affect the live document"
+    );
+}
+
+#[tokio::test]
 async fn same_name_chapter_never_overwrites_existing_chapter() {
     let temp = TempDir::new().expect("temp dir");
     let root = temp.path().join("novel");
