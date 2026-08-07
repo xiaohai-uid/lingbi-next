@@ -129,26 +129,22 @@ jobs:
         run: cargo install tauri-driver --locked
         shell: pwsh
 
-      - name: Probe Edge WebDriver location
+      - name: Download version-matched Edge WebDriver
         shell: pwsh
         run: |
-          $candidates = @(
-            'C:\Program Files (x86)\Microsoft\Edge\Application\msedgedriver.exe',
-            'C:\Program Files\Microsoft\Edge\Application\msedgedriver.exe'
-          )
-          $found = $null
-          foreach ($candidate in $candidates) {
-            if (Test-Path $candidate) { $found = $candidate; break }
-          }
-          if ($found) {
-            Write-Host "msedgedriver found: $found"
-            "LINGBI_EDGE_DRIVER=$found" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          } else {
-            Write-Host "msedgedriver not in well-known locations; PATH search:"
-            Get-Command msedgedriver -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
-          }
-          Write-Host "Edge version:"
-          (Get-Item 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe').VersionInfo.ProductVersion
+          # The preinstalled SeleniumWebDrivers msedgedriver does NOT match
+          # the runner's Edge version, which makes tauri-driver hang on
+          # POST /session (verified locally: a version-matched driver from
+          # msedgedriver.microsoft.com passes the full golden path).
+          $edge = (Get-Item 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe').VersionInfo.ProductVersion
+          Write-Host "Edge version: $edge"
+          $zip = Join-Path $env:RUNNER_TEMP 'edgedriver.zip'
+          Invoke-WebRequest -Uri "https://msedgedriver.microsoft.com/$edge/edgedriver_win64.zip" -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath (Join-Path $env:RUNNER_TEMP 'edgedriver') -Force
+          $driver = Join-Path $env:RUNNER_TEMP 'edgedriver/msedgedriver.exe'
+          if (-not (Test-Path $driver)) { Write-Host 'msedgedriver download failed'; exit 1 }
+          "LINGBI_EDGE_DRIVER=$driver" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "msedgedriver ready: $driver"
 
       - name: Run real Windows desktop E2E (explicit, never skipped)
         run: |
