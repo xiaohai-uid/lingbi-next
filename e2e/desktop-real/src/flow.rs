@@ -324,7 +324,7 @@ pub fn golden_path(binary: &Path) -> Result<(), String> {
 
     eprintln!("PHASE: after reopen");
     let reopened = session_state(&second);
-    assert_eq_documents(&reopened, 1)?;
+    assert_documents(&reopened, 1)?;
     eprintln!("PHASE: chapter state after reopen");
     let reopened_chapter = chapter_state(&second, "第一章");
     assert_contains(
@@ -365,10 +365,6 @@ fn assert_documents(state: &Value, expected: usize) -> Result<(), String> {
         return Err(format!("expected {expected} documents, found {count}"));
     }
     Ok(())
-}
-
-fn assert_eq_documents(state: &Value, expected: usize) -> Result<(), String> {
-    assert_documents(state, expected)
 }
 
 fn assert_eq_u64(state: &Value, field: &str, expected: u64) -> Result<(), String> {
