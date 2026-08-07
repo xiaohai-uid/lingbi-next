@@ -172,6 +172,7 @@ jobs:
           if ($wv2) { Write-Host "webview2Runtime(HKLM)=$($wv2.pv)" } else { Write-Host 'webview2Runtime(HKLM)=MISSING' }
           $wv2u = Get-ItemProperty 'HKCU:\Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' -ErrorAction SilentlyContinue
           if ($wv2u) { Write-Host "webview2Runtime(HKCU)=$($wv2u.pv)" } else { Write-Host 'webview2Runtime(HKCU)=none' }
+          Get-ChildItem Env: | Where-Object { $_.Name -like 'WEBVIEW2*' } | ForEach-Object { Write-Host "env $($_.Name)=$($_.Value)" }
 
           # ---------- 2) standalone app: window + webview2 children ----------
           $p = Start-Process -FilePath $app -PassThru
@@ -212,20 +213,46 @@ jobs:
           Write-Host '--- netstat 4455/4456 ---'
           netstat -ano | Select-String '4455|4456' | Select-Object -First 12
 
-          # ---------- 4) bypass tauri-driver: POST /session straight to msedgedriver ----------
-          $nativeBody = @{ capabilities = @{ alwaysMatch = @{ 'ms:edgeOptions' = @{ binary = $app; args = @() }; 'ms:edgeChromium' = $true; 'browserName' = 'webview2' } } } | ConvertTo-Json -Depth 8
-          $curlOut2 = Join-Path $env:RUNNER_TEMP 'curl-body2.txt'
-          Write-Host '--- curl POST /session directly to native driver (cap 30s) ---'
-          & curl.exe --max-time 30 -sS -w "HTTP_CODE=%{http_code} TIME=%{time_total}`n" -D - -X POST 'http://127.0.0.1:4456/session' -H 'Content-Type: application/json' --data $nativeBody -o $curlOut2 2>&1 | Select-Object -First 25
-          Write-Host "curlNativeExit=$LASTEXITCODE"
-          Write-Host '--- native response body ---'
-          Get-Content $curlOut2 -ErrorAction SilentlyContinue | Select-Object -First 15
-          $apps2 = @(Get-Process lingbi-desktop -ErrorAction SilentlyContinue)
-          Write-Host "lingbiProcsAfterNative=$($apps2.Count)"
-          $apps2 | ForEach-Object { Write-Host "  pid=$($_.Id) title='$($_.MainWindowTitle)'" }
-
+          # ---------- 4) bypass tauri-driver: direct msedgedriver with verbose logs ----------
+          # Stop tauri-driver first (it owns a msedgedriver on 4456)
           Stop-Process -Id $td.Id -Force -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 1
+          Get-Process lingbi-desktop,msedgewebview2 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+          $drvOut = Join-Path $env:RUNNER_TEMP 'driver-out.log'
+          $drvErr = Join-Path $env:RUNNER_TEMP 'driver-err.log'
+          $native = Start-Process -FilePath $env:LINGBI_EDGE_DRIVER -ArgumentList '--port=4456','--host=127.0.0.1','--verbose' -RedirectStandardOutput $drvOut -RedirectStandardError $drvErr -PassThru
+          Start-Sleep -Seconds 4
+          try { Invoke-RestMethod 'http://127.0.0.1:4456/status' -TimeoutSec 5 | Out-Null; Write-Host 'directNativeStatus: OK' }
+          catch { Write-Host "directNativeStatus: FAIL $_" }
+          $nativeBody = @{ capabilities = @{ alwaysMatch = @{ 'ms:edgeOptions' = @{ binary = $app; args = @() }; 'ms:edgeChromium' = $true; 'browserName' = 'webview2' } } } | ConvertTo-Json -Depth 8 -Compress
+          $bodyFile = Join-Path $env:RUNNER_TEMP 'native-body.json'
+          Set-Content -Path $bodyFile -Value $nativeBody -Encoding utf8
+          $curlOut2 = Join-Path $env:RUNNER_TEMP 'curl-body2.txt'
+          Write-Host '--- curl POST /session directly to native driver (cap 60s) ---'
+          $curlNative = Start-Process -FilePath 'curl.exe' -ArgumentList '--max-time','60','-sS','-w','HTTP_CODE=%{http_code} TIME=%{time_total}','-X','POST','http://127.0.0.1:4456/session','-H','Content-Type: application/json','--data',"@$bodyFile" -PassThru
+          Start-Sleep -Seconds 12
+          # probe the app's real command line + CDP port while the session hangs
+          $appProcs = Get-CimInstance Win32_Process -Filter "Name='lingbi-desktop.exe'" -ErrorAction SilentlyContinue
+          $appProcs | ForEach-Object { Write-Host "appCmdLine: $($_.CommandLine)" }
+          $cdpPort = ''
+          foreach ($ap in $appProcs) { if ($ap.CommandLine -match 'remote-debugging-port=(\d+)') { $cdpPort = $matches[1]; break } }
+          Write-Host "cdpPort=$cdpPort"
+          if ($cdpPort) {
+            netstat -ano | Select-String ":$cdpPort " | Select-Object -First 6
+            Write-Host '--- curl CDP /json/version ---'
+            & curl.exe --max-time 5 -sS "http://127.0.0.1:$cdpPort/json/version" 2>&1 | Select-Object -First 5
+          }
+          Wait-Process -Id $curlNative.Id -Timeout 80 -ErrorAction SilentlyContinue
+          Write-Host "curlNativeExit=$($curlNative.ExitCode)"
+          Write-Host '--- native response body ---'
+          Get-Content $curlOut2 -ErrorAction SilentlyContinue | Select-Object -First 15
+          Stop-Process -Id $native.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 1
+          Write-Host '--- msedgedriver stdout (verbose) ---'
+          Get-Content $drvOut -ErrorAction SilentlyContinue | Select-Object -Last 60
+          Write-Host '--- msedgedriver stderr ---'
+          Get-Content $drvErr -ErrorAction SilentlyContinue | Select-Object -Last 30
           Write-Host '--- tauri-driver stdout ---'
           Get-Content $out -ErrorAction SilentlyContinue | Select-Object -Last 30
           Write-Host '--- tauri-driver stderr ---'
