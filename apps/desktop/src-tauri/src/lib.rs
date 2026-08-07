@@ -789,30 +789,6 @@ async fn configured_provider(
     ))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use lingbi_contracts::ErrorCode;
-
-    #[test]
-    fn app_error_maps_to_structured_command_error() {
-        let error = AppError::new(ErrorCode::DocumentConflict, "conflict".to_owned(), false);
-        let dto = CommandErrorDto::from(error);
-        assert_eq!(dto.code, "DocumentConflict");
-        assert_eq!(dto.message, "conflict");
-        assert!(!dto.retryable);
-    }
-
-    #[test]
-    fn command_error_serializes_structured_fields() {
-        let dto = command_error("INVALID_UUID", "bad id", false);
-        let json = serde_json::to_value(dto).expect("json");
-        assert_eq!(json["code"], "INVALID_UUID");
-        assert_eq!(json["message"], "bad id");
-        assert_eq!(json["retryable"], false);
-    }
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -851,4 +827,28 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running LingBi Next");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lingbi_contracts::ErrorCode;
+
+    #[test]
+    fn app_error_maps_to_structured_command_error() {
+        let error = AppError::new(ErrorCode::DocumentConflict, "conflict".to_owned(), false);
+        let dto = CommandErrorDto::from(error);
+        assert_eq!(dto.code, "DocumentConflict");
+        assert_eq!(dto.message, "conflict");
+        assert!(!dto.retryable);
+    }
+
+    #[test]
+    fn command_error_serializes_structured_fields() {
+        let dto = command_error("INVALID_UUID", "bad id", false);
+        let json = serde_json::to_value(dto).expect("json");
+        assert_eq!(json["code"], "INVALID_UUID");
+        assert_eq!(json["message"], "bad id");
+        assert_eq!(json["retryable"], false);
+    }
 }
