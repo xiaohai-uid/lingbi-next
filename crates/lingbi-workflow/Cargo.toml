@@ -1,0 +1,21 @@
+[package]
+name = "lingbi-workflow"
+version = "0.1.0"
+edition = "2021"
+description = "P7 章事务引擎：8 节点链 + input_hash/invalidate/checkpoint（#24）"
+
+[dependencies]
+lingbi-book = { path = "../lingbi-book" }
+lingbi-ai = { path = "../lingbi-ai" }
+lingbi-storage = { path = "../lingbi-storage" }
+lingbi-contracts = { path = "../lingbi-contracts" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
+futures = "0.3"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tempfile = "3"
+async-stream = "0.3"

@@ -233,6 +233,21 @@ fn parse_issues(raw: Option<&Value>) -> (Vec<ReviewIssue>, Vec<String>) {
     (issues, errors)
 }
 
+/// 从 JSON 文本解析评审（P7 章事务引擎 review 节点用；与 `load_review` 同一
+/// 解析语义：枚举校验 + critical 强制 blocking + 逐条错误）。
+pub fn parse_review_json(text: &str) -> Result<(Vec<ReviewIssue>, Vec<String>), AppError> {
+    let data: Value = match serde_json::from_str(text) {
+        Ok(v) => v,
+        Err(e) => {
+            return Ok((Vec::new(), vec![format!("评审 JSON 非法: {e}")]));
+        }
+    };
+    if !data.is_object() {
+        return Ok((Vec::new(), vec!["评审 JSON 顶层不是对象".to_owned()]));
+    }
+    Ok(parse_issues(data.get("issues")))
+}
+
 /// 引擎 `load_review`：读评审 JSON；文件缺失抛错，非法 JSON/顶层非对象/条目错误 → errors。
 pub fn load_review(path: &Path) -> Result<(Vec<ReviewIssue>, Vec<String>), AppError> {
     if !path.exists() {
@@ -248,16 +263,7 @@ pub fn load_review(path: &Path) -> Result<(Vec<ReviewIssue>, Vec<String>), AppEr
             return Ok((Vec::new(), vec![format!("评审 JSON 非法: {e}")]));
         }
     };
-    let data: Value = match serde_json::from_str(&text) {
-        Ok(v) => v,
-        Err(e) => {
-            return Ok((Vec::new(), vec![format!("评审 JSON 非法: {e}")]));
-        }
-    };
-    if !data.is_object() {
-        return Ok((Vec::new(), vec!["评审 JSON 顶层不是对象".to_owned()]));
-    }
-    Ok(parse_issues(data.get("issues")))
+    parse_review_json(&text)
 }
 
 /// 引擎 `has_blocking`。

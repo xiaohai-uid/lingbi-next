@@ -101,6 +101,23 @@ pub fn body(path: &Path) -> Result<String, AppError> {
     }
 }
 
+/// 重组章文件字节 = 原 frontmatter 段（原样保留）+ 新正文（P7 章事务
+/// settlement 用；与命令层 full_chapter_bytes 同逻辑，bytes 语义一致）。
+/// 无闭合 `---\n` / 非 `---` 开头 → 按纯正文整体替换（与 `body()` 宽容互逆）。
+pub fn replace_body(path: &Path, content: &str) -> Result<Vec<u8>, AppError> {
+    let text = read_text(path)?;
+    let mut fm_seg = "";
+    let mut sep = "";
+    if text.starts_with("---") {
+        let after_first = text.strip_prefix("---").unwrap_or(&text);
+        if let Some(p) = after_first.find("---\n") {
+            fm_seg = &text[..p + 3 + 4];
+            sep = if content.starts_with('\n') { "" } else { "\n" };
+        }
+    }
+    Ok(format!("{fm_seg}{sep}{content}").into_bytes())
+}
+
 fn read_text(path: &Path) -> Result<String, AppError> {
     std::fs::read_to_string(path).map_err(|_| {
         AppError::new(

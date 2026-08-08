@@ -84,8 +84,32 @@ pub fn redlines(root: Option<&Path>) -> Result<Vec<(String, String)>, AppError> 
     Ok(out)
 }
 
+/// 占位符正则（P7 章事务引擎草稿机检与 check_placeholder 同一正则）。
+pub const PLACEHOLDER_RE: &str = r"TODO|占位|待补|待写|XXX|\{[A-Za-z_]+\}";
+
+/// 草稿文本占位符命中（P7 machine-check 节点用；`check_placeholder` 同正则）。
+pub fn placeholder_hits(text: &str) -> Vec<String> {
+    let re = Regex::new(PLACEHOLDER_RE).expect("占位符正则静态合法");
+    re.find_iter(text).map(|m| m.as_str().to_owned()).collect()
+}
+
+/// 草稿文本红线命中（P7 machine-check 节点用；`check_redlines` 同表），
+/// 返回 (红线名, 命中片段)。root 给定并入本书反例库（同 `redlines`）。
+pub fn redline_hits(text: &str, root: Option<&Path>) -> Result<Vec<(String, String)>, AppError> {
+    let rl = redlines(root)?;
+    let mut hits = Vec::new();
+    for (pat, name) in &rl {
+        let re = Regex::new(pat).expect("红线正则来自内置表或 re.escape 产物");
+        if let Some(m) = re.find(text) {
+            let (s, e) = (char_index(text, m.start()), char_index(text, m.end()));
+            hits.push((name.clone(), snippet(text, s, e, 6)));
+        }
+    }
+    Ok(hits)
+}
+
 /// 引擎 `collect_checks` 的单项结果。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct CheckResult {
     pub ok: bool,
     pub name: String,

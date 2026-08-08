@@ -808,20 +808,7 @@ fn ratchet_guard(root: &Path, ch: i64) -> Result<(), CommandError> {
 ///   不注入空行、不丢弃原字节；
 /// - 非 `---` 开头的纯正文文件 → 原样整体替换。
 fn full_chapter_bytes(path: &Path, content: &str) -> Result<Vec<u8>, CommandError> {
-    let existing = std::fs::read(path)
-        .map_err(|_| CommandError::new("DOCUMENT_NOT_FOUND", "读章节失败", false))?;
-    let text = String::from_utf8_lossy(&existing);
-    let mut fm_seg = "";
-    let mut sep = "";
-    if text.starts_with("---") {
-        let after_first = text.strip_prefix("---").unwrap_or(&text);
-        if let Some(p) = after_first.find("---\n") {
-            fm_seg = &text[..p + 3 + 4];
-            sep = if content.starts_with('\n') { "" } else { "\n" };
-        }
-        // 无闭合：整体按纯正文处理（与 body() 宽容一致）
-    }
-    Ok(format!("{fm_seg}{sep}{content}").into_bytes())
+    lingbi_book::replace_body(path, content).map_err(CommandError::from)
 }
 
 /// authoritative 写入口（命令层唯一写通道）：
