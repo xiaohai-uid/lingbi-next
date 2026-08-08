@@ -396,6 +396,16 @@ pub fn list_skills() -> Vec<lingbi_commands::SkillCardDto> {
     lingbi_commands::list_skills()
 }
 
+/// 迁移旧书仓/旧项目到 V3 托管书仓（P6）：source 只读 + 正文 byte-for-byte，
+/// 返回六字段回执。
+#[tauri::command]
+pub fn migrate_book(
+    source: String,
+    destination: String,
+) -> Result<lingbi_commands::MigrationReceiptDto, CommandErrorDto> {
+    lingbi_commands::migrate_book(&source, &destination).map_err(CommandErrorDto::from)
+}
+
 /// 运行台账：`.lingbi/` 事务层 append-only 历史（checkpoints + receipts）。
 #[tauri::command]
 pub fn get_run_ledger(

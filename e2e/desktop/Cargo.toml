@@ -12,6 +12,7 @@ lingbi-commands = { path = "../../crates/lingbi-commands" }
 lingbi-contracts = { path = "../../crates/lingbi-contracts" }
 lingbi-application = { path = "../../crates/lingbi-application" }
 lingbi-domain = { path = "../../crates/lingbi-domain" }
+lingbi-migration = { path = "../../crates/lingbi-migration" }
 lingbi-mutation = { path = "../../crates/lingbi-mutation" }
 lingbi-recovery = { path = "../../crates/lingbi-recovery" }
 lingbi-storage = { path = "../../crates/lingbi-storage" }

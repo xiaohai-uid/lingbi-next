@@ -191,6 +191,24 @@ pub struct ExportResultDto {
     pub path: String,
 }
 
+/// P6 迁移回执 DTO（六字段，对应 lingbi-migration::MigrationReceipt）。
+#[derive(Debug, Clone, Serialize)]
+pub struct MigrationReceiptDto {
+    pub source_hash: String,
+    pub classification: String,
+    pub destination: String,
+    pub destination_hash: String,
+    pub migration_rule: Vec<FileRuleDto>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FileRuleDto {
+    pub source: String,
+    pub destination: String,
+    pub rule: String,
+}
+
 /// 声明式写作技巧卡（P5-5）：只读静态数据——无文件系统/进程/执行能力，
 /// UI 仅渲染展示。完整小白 4 步模式随 P9（#26）产品 UI。
 #[derive(Debug, Clone, Serialize)]
@@ -651,6 +669,31 @@ pub fn export_chapter(root: &str, ch: i64, format: &str) -> Result<ExportResultD
     Ok(ExportResultDto {
         format,
         path: path.to_string_lossy().into_owned(),
+    })
+}
+
+/// 迁移旧书仓/旧项目到 Book V3 托管书仓（P6）：五件套管线（inspect →
+/// plan → execute → validate），source 只读、正文 byte-for-byte，返回
+/// 六字段回执（同时落 `.lingbi/migration-receipt.json`）。支持
+/// storyrepo-legacy 与 flutter-v1 两类源。
+pub fn migrate_book(source: &str, destination: &str) -> Result<MigrationReceiptDto, CommandError> {
+    let receipt = lingbi_migration::migrate_book(Path::new(source), Path::new(destination))
+        .map_err(CommandError::from)?;
+    Ok(MigrationReceiptDto {
+        source_hash: receipt.source_hash,
+        classification: receipt.classification,
+        destination: receipt.destination,
+        destination_hash: receipt.destination_hash,
+        migration_rule: receipt
+            .migration_rule
+            .iter()
+            .map(|rule| FileRuleDto {
+                source: rule.source.clone(),
+                destination: rule.destination.clone(),
+                rule: rule.rule.clone(),
+            })
+            .collect(),
+        warnings: receipt.warnings,
     })
 }
 

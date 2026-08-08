@@ -1140,6 +1140,7 @@ dependencies = [
  "lingbi-book",
  "lingbi-contracts",
  "lingbi-import-export",
+ "lingbi-migration",
  "lingbi-recovery",
  "lingbi-storage",
  "serde",
@@ -1178,6 +1179,7 @@ dependencies = [
  "lingbi-commands",
  "lingbi-contracts",
  "lingbi-domain",
+ "lingbi-migration",
  "lingbi-mutation",
  "lingbi-recovery",
  "lingbi-storage",
@@ -1230,6 +1232,21 @@ dependencies = [
  "tokio",
  "uuid",
  "zip",
+]
+
+[[package]]
+name = "lingbi-migration"
+version = "0.1.0"
+dependencies = [
+ "lingbi-book",
+ "lingbi-contracts",
+ "lingbi-import-export",
+ "lingbi-storage",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "uuid",
 ]
 
 [[package]]

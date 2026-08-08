@@ -1,0 +1,18 @@
+[package]
+name = "lingbi-migration"
+version = "0.1.0"
+edition = "2024"
+description = "P6 — V1 → Book V3 一次迁移五件套（Inspector/Plan/Executor/Validator/Receipt）"
+
+[dependencies]
+lingbi-book = { path = "../lingbi-book" }
+lingbi-contracts = { path = "../lingbi-contracts" }
+lingbi-import-export = { path = "../lingbi-import-export" }
+lingbi-storage = { path = "../lingbi-storage" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"

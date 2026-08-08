@@ -9,6 +9,7 @@ lingbi-application = { path = "../lingbi-application" }
 lingbi-book = { path = "../lingbi-book" }
 lingbi-contracts = { path = "../lingbi-contracts" }
 lingbi-import-export = { path = "../lingbi-import-export" }
+lingbi-migration = { path = "../lingbi-migration" }
 lingbi-recovery = { path = "../lingbi-recovery" }
 lingbi-storage = { path = "../lingbi-storage" }
 serde = { version = "1", features = ["derive"] }

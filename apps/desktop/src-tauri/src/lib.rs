@@ -947,6 +947,8 @@ pub fn run() {
             book_cmds::export_chapter,
             // P5-5 声明式技巧卡（只读）
             book_cmds::list_skills,
+            // P6 迁移（source 只读 + byte-for-byte + 回执）
+            book_cmds::migrate_book,
             // P5-2 AI 生成（Book V3）
             book_cmds::book_generate,
             book_cmds::book_generate_cancel,
