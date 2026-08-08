@@ -5,11 +5,12 @@
 //! - precommit：全量，passed = 无 fail。
 //! - postcommit：全量且第 10 项（追踪新鲜）必查（不得跳过，计入 fail）。
 //!
-//! 注意：本模块随 P2-05 checks 落地（doctor stdout 等价测试依赖聚合），
-//! 三门禁的 exit code 与命令层接线见 P2-06 票据。
+//! 注意：本模块随 P2-05 checks 落地（doctor stdout 等价测试依赖聚合）；
+//! `exit_code`（引擎 `cli.cmd_doctor` 的 0/1 映射）随 P2-06 落在库层，
+//! 待命令层（lingbi-application/ffi）落地时由 doctor 命令调用。
 //!
 //! 与引擎的差异（有意）：`gate()` 本身纯聚合、无输出/退出码（引擎同）；
-//! exit code 语义（passed → 0/1）由命令层负责，P2-06 落地。
+//! 引擎 cmd_doctor 的 FileNotFoundError → exit 1 路径属 CLI 层，不在本模块。
 
 use crate::checks::collect_checks;
 use lingbi_contracts::AppError;
@@ -22,6 +23,15 @@ pub struct GateResult {
     pub passed: bool,
     pub fails: Vec<String>,
     pub oks: Vec<String>,
+}
+
+/// 引擎 `cli.cmd_doctor` 的 exit code：`return 0 if r["passed"] else 1`。
+pub fn exit_code(g: &GateResult) -> i32 {
+    if g.passed {
+        0
+    } else {
+        1
+    }
 }
 
 /// 引擎 `gate(root, stage, chapter)`：`{"passed", "fails", "oks"}`。
