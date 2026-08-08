@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "title": "LingBi Book Project V3 — 目录树契约",
+  "description": "书仓目录树的类别/可变性契约。路径键：纯路径 = 精确匹配；含正则元字符的键 = 以 ^键$ 全路径正则匹配。类别：authoritative（唯一事实源）/ derived（可重建，禁手改）/ mutable（作者可编辑）。可变性：append-only（只增不改，棘轮）/ mutable / derived。",
+  "required_dirs": ["大纲", "定稿", "文风", "工作区", "追踪"],
+  "paths": {
+    "book.yaml": { "category": "authoritative", "mutability": "mutable", "schema": "book_config", "required": true, "note": "仅经事务写；新建书含 id(uuid)" },
+
+    "大纲": { "category": "mutable", "mutability": "mutable", "note": "作者意图（可编辑）" },
+    "大纲/总纲.md": { "category": "mutable" },
+    "大纲/卷纲": { "category": "mutable" },
+    "大纲/章纲.md": { "category": "mutable" },
+    "大纲/细纲蓝图.md": { "category": "mutable" },
+    "大纲/承诺": { "category": "mutable" },
+    "大纲/承诺/总表.md": { "category": "mutable" },
+    "大纲/信息差": { "category": "mutable" },
+
+    "定稿": { "category": "authoritative", "mutability": "append-only", "note": "棘轮：只增不改，写入仅经事务" },
+    "定稿/正文": { "category": "authoritative", "mutability": "append-only" },
+    "^定稿/正文/\\d{3}-.+\\.md$": { "category": "authoritative", "mutability": "append-only", "role": "chapter", "frontmatter_required": ["title", "chapter", "volume", "words", "status", "summary"] },
+    "定稿/设定": { "category": "authoritative", "mutability": "append-only" },
+    "定稿/设定/名册.md": { "category": "authoritative", "mutability": "append-only" },
+    "定稿/设定/角色": { "category": "authoritative", "mutability": "append-only" },
+    "^定稿/设定/角色/[^/]+\\.md$": { "category": "authoritative", "mutability": "append-only", "role": "entity_card" },
+    "定稿/设定/信息差": { "category": "authoritative", "mutability": "append-only" },
+    "定稿/设定/信息差/S-总表.md": { "category": "authoritative", "mutability": "append-only" },
+    "定稿/记忆": { "category": "authoritative", "mutability": "append-only" },
+    "定稿/记忆/章摘要": { "category": "authoritative", "mutability": "append-only" },
+    "^定稿/记忆/章摘要/\\d{3}\\.md$": { "category": "authoritative", "mutability": "append-only", "role": "chapter_summary" },
+
+    "文风": { "category": "mutable", "mutability": "mutable" },
+    "文风/风格宪法.md": { "category": "mutable" },
+    "文风/金句库": { "category": "authoritative", "mutability": "append-only" },
+    "^文风/金句库/\\d{3}\\.md$": { "category": "authoritative", "mutability": "append-only" },
+    "文风/审查反例库.md": { "category": "authoritative", "mutability": "append-only" },
+
+    "工作区": { "category": "mutable", "mutability": "mutable", "note": "草稿/评审报告/批次计划，可丢弃" },
+    "^工作区/.+$": { "category": "mutable" },
+
+    "追踪": { "category": "derived", "mutability": "derived", "note": "派生视图禁手改，只由引擎重建" },
+    "追踪/_tracking-state.json": { "category": "authoritative", "mutability": "append-only", "schema": "tracking_state", "required": true, "note": "唯一权威状态，仅事务写入" },
+    "^追踪/.+$": { "category": "derived", "mutability": "derived" },
+
+    ".lingbi": { "category": "authoritative", "mutability": "append-only", "optional": true, "note": "应用托管事务层（旧书仓允许缺席）" },
+    "^\\.lingbi/.+$": { "category": "authoritative", "mutability": "append-only", "optional": true }
+  }
+}
