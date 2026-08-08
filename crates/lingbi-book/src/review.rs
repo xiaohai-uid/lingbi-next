@@ -6,8 +6,8 @@
 //! 缺字段错误；severity/category 枚举校验；critical 强制 blocking）。
 //!
 //! 与引擎的差异（有意）：错误文案中的非字符串值展示与 Python str() 不完全一致、
-//! JSON 非法文案用 serde 错误文本——这些错误串不进入任何 stdout（resume 只取
-//! corrupt 布尔），不构成等价差异。
+//! JSON 非法文案用 serde 错误文本——resume 只取 corrupt 布尔不受影响；report 的
+//! 审查损坏分支直接展示该文本，行内允许差异（report_equivalence 用前缀断言）。
 
 use lingbi_contracts::{AppError, ErrorCode};
 use serde_json::Value;
