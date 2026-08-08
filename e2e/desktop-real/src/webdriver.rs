@@ -1,10 +1,7 @@
 //! WebDriver client and UI helpers for driving the real LingBi binary.
 
 use serde_json::{Value, json};
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
 use std::path::Path;
-use std::thread;
 use std::time::{Duration, Instant};
 
 /// Blocking WebDriver client for a single session.
@@ -108,7 +105,7 @@ pub fn wait_until(driver: &WebDriver, script: &str, timeout: Duration, ready: &s
             started.elapsed() < timeout,
             "timed out waiting for {ready}: {value}"
         );
-        thread::sleep(Duration::from_millis(500));
+        std::thread::sleep(Duration::from_millis(500));
     }
 }
 
@@ -228,43 +225,4 @@ pub fn book_state(driver: &WebDriver, ch: Option<i64>) -> Value {
     let serialized = value.as_str().expect("book state string");
     serde_json::from_str(serialized)
         .unwrap_or_else(|error| panic!("book state json: {error}: {serialized}"))
-}
-
-/// Start a local SSE chat-completions server; returns its base URL.
-pub fn start_sse_server() -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind sse");
-    let port = listener.local_addr().expect("local addr").port();
-    thread::spawn(move || {
-        for mut stream in listener.incoming().flatten() {
-            let _ = handle_sse(&mut stream);
-        }
-    });
-    format!("http://127.0.0.1:{port}/v1/chat/completions")
-}
-
-fn handle_sse(stream: &mut TcpStream) -> std::io::Result<()> {
-    let mut buffer = [0u8; 4096];
-    let mut read = 0;
-    loop {
-        let count = stream.read(&mut buffer[read..])?;
-        if count == 0 {
-            break;
-        }
-        read += count;
-        if buffer[..read]
-            .windows(4)
-            .any(|window| window == b"\r\n\r\n")
-        {
-            break;
-        }
-    }
-    let body =
-        "data: {\"choices\":[{\"delta\":{\"content\":\"E2E候选正文\"}}]}\n\ndata: [DONE]\n\n";
-    write!(
-        stream,
-        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
-    )?;
-    stream.flush()
 }

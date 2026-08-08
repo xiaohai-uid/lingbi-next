@@ -61,6 +61,10 @@ describe("LingBi Next desktop shell", () => {
       chapterContent: "",
       chapterHash: "",
       saveState: "idle",
+      bookGenerating: false,
+      bookGenerationTaskId: null,
+      bookStreamingText: "",
+      bookCandidate: null,
     });
   });
 
@@ -131,6 +135,8 @@ describe("LingBi Next desktop shell", () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(screen.getByRole("button", { name: "生成" }));
+    // mock 流式为异步（delta + resolve），等待候选渲染
+    await new Promise((resolve) => setTimeout(resolve, 200));
 
     expect(
       await screen.findByText("第一章正文：雨夜，林渊推开旧车站的门。"),
@@ -436,5 +442,42 @@ describe("LingBi Next desktop shell", () => {
     expect(screen.getByLabelText("编辑器")).toHaveValue(
       "第一章的未保存编辑",
     );
+  });
+
+  it("generates a Book candidate and adopts it into the editor", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await createBookWithChapter(user);
+
+    await user.click(screen.getByRole("button", { name: "生成" }));
+    // mock 流式为异步（delta + resolve），等待候选渲染
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    expect(
+      await screen.findByText("第一章正文：雨夜，林渊推开旧车站的门。"),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("候选内容")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "采纳" }));
+
+    expect(await screen.findByText("已采纳")).toBeInTheDocument();
+    // 采纳后正文 = 候选内容（mock bookAdopt 写入章节）
+    expect(screen.getByLabelText("编辑器")).toHaveValue(
+      "第一章正文：雨夜，林渊推开旧车站的门。",
+    );
+    // 候选已清空（再次生成需重新点生成）
+    expect(screen.queryByRole("button", { name: "拒绝" })).not.toBeInTheDocument();
+  });
+
+  it("rejects a Book candidate and keeps the chapter untouched", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await createBookWithChapter(user);
+
+    await user.click(screen.getByRole("button", { name: "生成" }));
+    await screen.findByText("候选内容");
+    await user.click(screen.getByRole("button", { name: "拒绝" }));
+
+    expect(await screen.findByText("已拒绝")).toBeInTheDocument();
+    expect(screen.getByLabelText("编辑器")).toHaveValue("");
   });
 });

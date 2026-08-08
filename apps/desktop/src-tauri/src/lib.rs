@@ -31,6 +31,8 @@ struct DesktopState {
     recent: Mutex<Option<RecentProjects>>,
     /// Book V3 会话根（P4 命令层；`open_book` 设置，其余命令从中取书仓）。
     book_root: Mutex<Option<String>>,
+    /// P5-2：Book V3 生成任务取消令牌（book_generate）。
+    book_generation_tokens: Mutex<HashMap<Uuid, lingbi_ai::CancellationToken>>,
 }
 
 #[derive(Clone)]
@@ -135,6 +137,34 @@ enum GenerationEventDto {
     Cancelled {
         task_id: Uuid,
     },
+}
+
+/// P5-2 Book V3 生成事件（独立事件名 book-generation-event，不污染 V2）。
+#[derive(Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum BookGenerationEventDto {
+    Delta {
+        task_id: Uuid,
+        content: String,
+    },
+    Candidate {
+        task_id: Uuid,
+        candidate_id: String,
+        ch: i64,
+        content: String,
+    },
+    Error {
+        task_id: Uuid,
+        error: CommandErrorDto,
+    },
+    Cancelled {
+        task_id: Uuid,
+    },
+}
+
+#[derive(Serialize)]
+struct BookGenerateStartDto {
+    task_id: Uuid,
 }
 
 #[tauri::command]
@@ -906,6 +936,9 @@ pub fn run() {
             book_cmds::resume_workflow,
             book_cmds::cancel_workflow,
             book_cmds::get_run_ledger,
+            // P5-2 AI 生成（Book V3）
+            book_cmds::book_generate,
+            book_cmds::book_generate_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("error while running LingBi Next");

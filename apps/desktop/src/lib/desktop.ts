@@ -123,6 +123,22 @@ export interface GenerationEvent {
   error?: CommandError;
 }
 
+/// P5-2 Book V3 生成事件（book-generation-event）。
+export interface BookGenerationEvent {
+  type: "delta" | "candidate" | "error" | "cancelled";
+  task_id: string;
+  content?: string;
+  candidate_id?: string;
+  ch?: number;
+  error?: CommandError;
+}
+
+export interface BookCandidate {
+  candidate_id: string;
+  ch: number;
+  content: string;
+}
+
 export function toCommandError(error: unknown): CommandError {
   if (
     typeof error === "object" &&
@@ -571,6 +587,115 @@ export const desktop = {
       recovery_failed: 0,
       recovery_errors: [],
     };
+  },
+
+  async bookGenerate(
+    ch: number,
+    instruction: string,
+    onStart?: (taskId: string) => void,
+    onDelta?: (content: string) => void,
+  ): Promise<BookCandidate> {
+    if (inTauri()) {
+      return new Promise<BookCandidate>((resolve, reject) => {
+        let unlisten: (() => void) | undefined;
+        let taskId: string | null = null;
+        const cleanup = () => {
+          unlisten?.();
+        };
+        listen<BookGenerationEvent>("book-generation-event", (event) => {
+          if (taskId === null) {
+            taskId = event.payload.task_id;
+          } else if (event.payload.task_id !== taskId) {
+            return;
+          }
+          if (event.payload.type === "delta" && event.payload.content) {
+            onDelta?.(event.payload.content);
+          } else if (
+            event.payload.type === "candidate" &&
+            event.payload.candidate_id
+          ) {
+            cleanup();
+            resolve({
+              candidate_id: event.payload.candidate_id,
+              ch: event.payload.ch ?? ch,
+              content: event.payload.content ?? "",
+            });
+          } else if (event.payload.type === "error" && event.payload.error) {
+            cleanup();
+            reject(event.payload.error);
+          } else if (event.payload.type === "cancelled") {
+            cleanup();
+            reject(
+              toCommandError({
+                code: "AiCancelled",
+                message: "AI generation cancelled",
+                retryable: false,
+              }),
+            );
+          }
+        })
+          .then(async (unlistenFn) => {
+            unlisten = unlistenFn;
+            const started = await invoke<{ task_id: string }>("book_generate", {
+              ch,
+              instruction,
+            });
+            taskId = started.task_id;
+            onStart?.(taskId);
+          })
+          .catch((error) => {
+            cleanup();
+            reject(error);
+          });
+      });
+    }
+    // mock：异步流式（delta + onStart），与真实事件管道同形
+    return new Promise<BookCandidate>((resolve) => {
+      const taskId = crypto.randomUUID();
+      onStart?.(taskId);
+      const content = "第一章正文：雨夜，林渊推开旧车站的门。";
+      // 两段 delta 模拟流式
+      window.setTimeout(() => {
+        onDelta?.(content.slice(0, 10));
+        window.setTimeout(() => {
+          onDelta?.(content.slice(10));
+          resolve({
+            candidate_id: `${String(ch).padStart(3, "0")}-${crypto.randomUUID()}`,
+            ch,
+            content,
+          });
+        }, 30);
+      }, 30);
+    });
+  },
+
+  async bookGenerateCancel(taskId: string): Promise<void> {
+    if (inTauri()) {
+      await invoke("book_generate_cancel", { taskId });
+    }
+  },
+
+  async bookAdopt(candidateId: string): Promise<{ exit: number; stdout: string }> {
+    if (inTauri()) {
+      return invoke("adopt_candidate", { candidateId });
+    }
+    const book = [...mockBooks.values()].at(-1);
+    if (!book) throw new Error("no book session");
+    // mock：候选内容写入第一章（简化：ch 前缀解析）
+    const ch = Number(candidateId.split("-")[0]);
+    const entry = book.chapters.get(ch);
+    if (!entry) throw new Error(`chapter ${ch} not found`);
+    // mock：采纳内容与 bookGenerate mock 的候选一致
+    const content = "第一章正文：雨夜，林渊推开旧车站的门。";
+    entry.content = content;
+    entry.hash = mockHash(content);
+    return { exit: 0, stdout: "✅ commit" };
+  },
+
+  async bookReject(candidateId: string): Promise<void> {
+    if (inTauri()) {
+      await invoke("reject_candidate", { candidateId });
+    }
   },
 
   async listChapters(): Promise<ChapterMeta[]> {

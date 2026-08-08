@@ -2,6 +2,7 @@ import { create } from "zustand";
 import {
   desktop,
   toCommandError,
+  type BookCandidate,
   type BookSession,
   type Chapter,
   type Document,
@@ -46,6 +47,15 @@ interface AppStore {
   saveState: SaveState;
   bookOpen: (root: string) => Promise<void>;
   bookCreate: (root: string, name: string) => Promise<void>;
+  // P5-2 Book AI
+  bookGenerating: boolean;
+  bookGenerationTaskId: string | null;
+  bookStreamingText: string;
+  bookCandidate: BookCandidate | null;
+  bookGenerate: (instruction: string) => Promise<void>;
+  bookCancelGeneration: () => Promise<void>;
+  bookAdoptCandidate: () => Promise<void>;
+  bookRejectCandidate: () => Promise<void>;
   chapterCreate: (title: string) => Promise<void>;
   chapterOpen: (ch: number) => Promise<void>;
   chapterSave: () => Promise<void>;
@@ -106,6 +116,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
   chapterHash: "",
   lastSavedChapterContent: "",
   saveState: "idle",
+  bookGenerating: false,
+  bookGenerationTaskId: null,
+  bookStreamingText: "",
+  bookCandidate: null,
 
   // ---- Book V3（P5-1）----
 
@@ -195,6 +209,115 @@ export const useAppStore = create<AppStore>((set, get) => ({
         saveState: "saved",
         status: "章节已创建",
       });
+    } catch (error) {
+      setError(set, error);
+    }
+  },
+
+  async bookGenerate(instruction) {
+    const book = get().book;
+    const ch = get().currentCh;
+    if (!book || ch === null) return;
+    set({
+      bookGenerating: true,
+      error: null,
+      status: "生成中...",
+      bookGenerationTaskId: null,
+      bookStreamingText: "",
+      bookCandidate: null,
+    });
+    try {
+      const candidate = await desktop.bookGenerate(
+        ch,
+        instruction,
+        (taskId) => useAppStore.setState({ bookGenerationTaskId: taskId }),
+        (delta) =>
+          useAppStore.setState((state) => ({
+            bookStreamingText: state.bookStreamingText + delta,
+          })),
+      );
+      set({
+        bookCandidate: candidate,
+        bookGenerating: false,
+        bookGenerationTaskId: null,
+        bookStreamingText: "",
+        status: "候选已生成",
+      });
+    } catch (error) {
+      setError(set, error);
+      set({
+        bookGenerating: false,
+        bookGenerationTaskId: null,
+        bookStreamingText: "",
+        status: "",
+      });
+    }
+  },
+
+  async bookCancelGeneration() {
+    const taskId = get().bookGenerationTaskId;
+    if (!taskId) return;
+    try {
+      await desktop.bookGenerateCancel(taskId);
+      set({
+        bookGenerating: false,
+        bookGenerationTaskId: null,
+        bookStreamingText: "",
+        status: "已取消",
+      });
+    } catch (error) {
+      setError(set, error);
+    }
+  },
+
+  async bookAdoptCandidate() {
+    const candidate = get().bookCandidate;
+    if (!candidate) return;
+    // 采纳前 flush 未保存编辑（S3-3：生成期间输入的文字不因采纳被覆盖）
+    const pending = get();
+    if (
+      pending.currentCh !== null &&
+      pending.chapterContent !== pending.lastSavedChapterContent
+    ) {
+      await get().chapterSave();
+    }
+    // 目标章以候选携带的 ch 为准（生成期间切章不导致错章落盘）
+    const ch = candidate.ch;
+    set({ status: "采纳中...", error: null });
+    try {
+      const result = await desktop.bookAdopt(candidate.candidate_id);
+      if (result.exit !== 0) {
+        // 结算未过：正文已按事务落盘、草稿保留——保留候选供重试，
+        // 并如实呈现（不误导为已采纳）
+        set({
+          status: "采纳未完成",
+          error: result.stdout,
+          errorCode: "COMMIT_EXIT",
+        });
+        return;
+      }
+      // 采纳 = 正文落盘 + 结算（cmd_commit：合并追踪 + bump + 视图 +
+      // Final Revision 快照）；重读正文与追踪修订
+      const chapter = await desktop.openChapter(ch);
+      set({
+        bookCandidate: null,
+        chapterContent: chapter.body,
+        chapterHash: chapter.content_hash,
+        lastSavedChapterContent: chapter.body,
+        saveState: "saved",
+        status: "已采纳",
+      });
+    } catch (error) {
+      setError(set, error);
+    }
+  },
+
+  async bookRejectCandidate() {
+    const candidate = get().bookCandidate;
+    if (!candidate) return;
+    try {
+      await desktop.bookReject(candidate.candidate_id);
+      set({ bookCandidate: null, status: "已拒绝" });
     } catch (error) {
       setError(set, error);
     }

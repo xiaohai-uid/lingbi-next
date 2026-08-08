@@ -74,6 +74,18 @@ export function humanizeError(code: string): HumanError {
         guidance: "这条候选基于旧正文，请重新生成。",
         action: "regenerate",
       };
+    case "COMMIT_EXIT":
+      return {
+        title: "正文已保存，结算未完成",
+        guidance: "候选内容已写入正文，但章节结算未完成。可以重试采纳，或先检查机检提示。",
+        action: "retry",
+      };
+    case "CHAPTER_COMMITTED":
+      return {
+        title: "本章已提交",
+        guidance: "已提交的章节不能直接改写。旧章编辑的回炉功能将在后续版本提供。",
+        action: "retry",
+      };
     default:
       return {
         title: "操作没有成功",
@@ -523,6 +535,14 @@ function BookEditor() {
   const chapterCreate = useAppStore((state) => state.chapterCreate);
   const chapterOpen = useAppStore((state) => state.chapterOpen);
   const chapterSave = useAppStore((state) => state.chapterSave);
+  const bookGenerating = useAppStore((state) => state.bookGenerating);
+  const bookStreamingText = useAppStore((state) => state.bookStreamingText);
+  const bookCandidate = useAppStore((state) => state.bookCandidate);
+  const bookGenerate = useAppStore((state) => state.bookGenerate);
+  const bookCancelGeneration = useAppStore((state) => state.bookCancelGeneration);
+  const bookAdoptCandidate = useAppStore((state) => state.bookAdoptCandidate);
+  const bookRejectCandidate = useAppStore((state) => state.bookRejectCandidate);
+  const [instruction, setInstruction] = useState("生成一个雨夜开场");
   const [newTitle, setNewTitle] = useState("");
 
   const setChapterContent = (content: string) =>
@@ -616,6 +636,20 @@ function BookEditor() {
           <button disabled={currentCh === null} onClick={() => void chapterSave()}>
             保存
           </button>
+          <input
+            aria-label="写作要求"
+            value={instruction}
+            onChange={(event) => setInstruction(event.target.value)}
+          />
+          <button
+            disabled={bookGenerating || currentCh === null}
+            onClick={() => bookGenerate(instruction)}
+          >
+            {bookGenerating ? "生成中" : "生成"}
+          </button>
+          {bookGenerating ? (
+            <button onClick={() => void bookCancelGeneration()}>取消</button>
+          ) : null}
         </footer>
         {error ? (
           <ErrorPanel
@@ -629,7 +663,24 @@ function BookEditor() {
       </section>
       <aside className="candidate">
         <h2>AI 助手</h2>
-        <p>AI 写作功能将在下一步接入（P5-2）</p>
+        {bookGenerating && bookStreamingText ? (
+          <>
+            <p className="streaming">{bookStreamingText}</p>
+            <p className="hint">正在实时输出…</p>
+          </>
+        ) : null}
+        {bookCandidate ? (
+          <>
+            <h3>候选内容</h3>
+            <p>{bookCandidate.content}</p>
+            <div className="actions">
+              <button onClick={() => void bookAdoptCandidate()}>采纳</button>
+              <button onClick={() => void bookRejectCandidate()}>拒绝</button>
+            </div>
+          </>
+        ) : (
+          <p>{bookGenerating ? "AI 正在创作..." : "AI 生成后在此确认"}</p>
+        )}
       </aside>
     </main>
   );
