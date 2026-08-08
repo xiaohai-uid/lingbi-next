@@ -6,12 +6,16 @@
 //! 模块序（P2 票据）：config → book state → tracking state → derived views →
 //! checks → gates → contract → context → brief → revision → resume → batch → learn → report。
 
+pub mod checks;
 pub mod config;
+pub mod gates;
 pub mod state;
 pub mod tracking;
 pub mod views;
 
+pub use checks::{collect_checks, redlines, CheckResult};
 pub use config::{load_config, BookConfig};
+pub use gates::{gate, GateResult};
 pub use state::{body, chapter_files, chapter_num, fm_list, frontmatter, hanzi, latest_chapter};
 pub use tracking::{
     dump_state, init_state, load_state, merge_chapter_facts, new_state, save_state, TrackingState,
