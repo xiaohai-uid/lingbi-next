@@ -1,0 +1,10 @@
+{
+ "status": "not_started",
+ "next_step": "第3章尚未动笔:先跑机检 prewrite,再按 合同→任务书→起草 推进",
+ "files": {
+  "正文": false,
+  "评审报告": false,
+  "追踪已合并": false,
+  "状态卡新鲜": true
+ }
+}

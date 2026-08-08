@@ -1,0 +1,10 @@
+{
+ "book": "sr-oracle-live-sc3md2jp",
+ "rev": 2,
+ "through": 1,
+ "chapters": 1,
+ "latest_chapter_file": 2,
+ "words": 102,
+ "promises_open": 1,
+ "gaps_unrevealed": 1
+}

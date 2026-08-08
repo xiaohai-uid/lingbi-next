@@ -1,0 +1,52 @@
+{
+ "spec": 1,
+ "book": "sr-oracle-live-sc3md2jp",
+ "imported_through_chapter": 1,
+ "state_revision": 2,
+ "chapters": {
+  "1": {
+   "status": "committed",
+   "title": "开局",
+   "words": "66"
+  }
+ },
+ "promises": {
+  "P-001": {
+   "status": "open",
+   "open_ch": 1,
+   "adv_ch": 1,
+   "done_ch": null,
+   "note": ""
+  }
+ },
+ "info_gaps": {
+  "S-001": {
+   "revealed": false,
+   "plant_ch": 1,
+   "reveal_ch": null,
+   "note": ""
+  }
+ },
+ "timeline": [
+  {
+   "ch": 1,
+   "event": "阿米夜归,与米粒重逢,远山火光一闪而逝。",
+   "kind": "fact"
+  }
+ ],
+ "entity_states": {
+  "阿米": {
+   "first_ch": 1,
+   "where": "",
+   "state": ""
+  },
+  "米粒": {
+   "first_ch": 1,
+   "where": "",
+   "state": ""
+  }
+ },
+ "reader_knowledge": {
+  "reveals": []
+ }
+}
