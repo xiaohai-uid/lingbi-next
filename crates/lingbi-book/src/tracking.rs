@@ -11,6 +11,7 @@
 //! - 引擎 `load_state` 对类型错误字段**重置为默认**；本实现返回 `BookCorrupted`（fail-closed）。
 //! - 引擎 `save_state` 用 tmp+rename 原子写；本实现同（事务层在 P3 接入）。
 
+use crate::json_engine::{obj, opt_int, render as render_json, Frag};
 use crate::state::{fm_list, TRACKING_DIR};
 use indexmap::IndexMap;
 use lingbi_contracts::{AppError, ErrorCode};
@@ -107,7 +108,7 @@ fn default_revision() -> i64 {
     1
 }
 
-fn state_path(root: &Path) -> std::path::PathBuf {
+pub(crate) fn state_path(root: &Path) -> std::path::PathBuf {
     root.join(TRACKING_DIR).join(STATE_FILE)
 }
 
@@ -347,88 +348,7 @@ pub fn unrevealed_gaps(s: &TrackingState) -> Vec<(&String, &InfoGapEntry)> {
 }
 
 // ── 引擎式 JSON 序列化（json.dump ensure_ascii=False indent=1 逐字节等价） ──
-
-enum Frag {
-    Str(String),
-    Int(i64),
-    Raw(String),
-    Bool(bool),
-    Null,
-    Arr(Vec<Frag>),
-    Obj(Vec<(String, Frag)>),
-}
-
-fn esc(s: &str, out: &mut String) {
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{08}' => out.push_str("\\b"),
-            '\u{0c}' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 => {
-                out.push_str(&format!("\\u{:04x}", c as u32));
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-}
-
-fn dump(frag: &Frag, indent: usize, out: &mut String) {
-    match frag {
-        Frag::Str(s) => esc(s, out),
-        Frag::Int(n) => out.push_str(&n.to_string()),
-        Frag::Raw(r) => out.push_str(r),
-        Frag::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
-        Frag::Null => out.push_str("null"),
-        Frag::Arr(items) => {
-            if items.is_empty() {
-                out.push_str("[]");
-                return;
-            }
-            out.push('[');
-            for (i, item) in items.iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                out.push('\n');
-                out.push_str(&" ".repeat(indent + 1));
-                dump(item, indent + 1, out);
-            }
-            out.push('\n');
-            out.push_str(&" ".repeat(indent));
-            out.push(']');
-        }
-        Frag::Obj(entries) => {
-            if entries.is_empty() {
-                out.push_str("{}");
-                return;
-            }
-            out.push('{');
-            for (i, (k, v)) in entries.iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                out.push('\n');
-                out.push_str(&" ".repeat(indent + 1));
-                esc(k, out);
-                out.push_str(": ");
-                dump(v, indent + 1, out);
-            }
-            out.push('\n');
-            out.push_str(&" ".repeat(indent));
-            out.push('}');
-        }
-    }
-}
-
-fn obj(entries: Vec<(String, Frag)>) -> Frag {
-    Frag::Obj(entries)
-}
+// Frag/esc/dump/obj/opt_int 已上提共享模块 json_engine（P2-07 起 contract 共用）。
 
 impl TrackingState {
     fn to_frag(&self) -> Frag {
@@ -567,13 +487,6 @@ impl TrackingState {
     }
 }
 
-fn opt_int(v: Option<i64>) -> Frag {
-    match v {
-        Some(n) => Frag::Int(n),
-        None => Frag::Null,
-    }
-}
-
 /// serde_json::Value → 引擎式 Frag（reveals 内容兜底）。
 /// 注：对象键序遵循 serde_json::Map（未开 preserve_order 时按字母序；
 /// 引擎为插入序——当前 reveals 恒空，写入方（P7/P8）落地前需对齐）。
@@ -596,7 +509,5 @@ fn json_value_to_frag(v: &serde_json::Value) -> Frag {
 
 /// 引擎 `json.dump(s, ensure_ascii=False, indent=1)` 的逐字节等价输出。
 pub fn dump_state(s: &TrackingState) -> String {
-    let mut out = String::new();
-    dump(&s.to_frag(), 0, &mut out);
-    out
+    render_json(&s.to_frag())
 }
