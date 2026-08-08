@@ -237,8 +237,9 @@ def main():
     except Exception:
         pass
 
-    # 活书仓放临时目录;corpus 只保留不可变快照 steps/000-initial + steps/NNN-*
-    live = tempfile.mkdtemp(prefix="sr-oracle-live-")
+    # 活书仓放临时目录(固定名——追踪状态 book 字段=basename,固定名保证 corpus 可重放);
+    # corpus 只保留不可变快照 steps/000-initial + steps/NNN-*
+    live = os.path.join(tempfile.gettempdir(), "sr-oracle-live")
     try:
         build_sample_book(live)
         init_snap = os.path.join(steps_dir, "000-initial")

@@ -9,7 +9,7 @@
  "foreshadow_todo": [],
  "ending_requirement": "无；P-002；S-001 揭示",
  "sources": {
-  "追踪状态": "C:\\Users\\a1691\\AppData\\Local\\Temp\\sr-oracle-live-sc3md2jp\\追踪\\_tracking-state.json",
-  "细纲蓝图": "C:\\Users\\a1691\\AppData\\Local\\Temp\\sr-oracle-live-sc3md2jp\\大纲\\细纲蓝图.md"
+  "追踪状态": "C:\\Users\\a1691\\AppData\\Local\\Temp\\sr-oracle-live\\追踪\\_tracking-state.json",
+  "细纲蓝图": "C:\\Users\\a1691\\AppData\\Local\\Temp\\sr-oracle-live\\大纲\\细纲蓝图.md"
  }
 }

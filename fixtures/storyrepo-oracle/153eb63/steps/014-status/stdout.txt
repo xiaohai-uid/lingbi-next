@@ -1,5 +1,5 @@
 {
- "book": "sr-oracle-live-sc3md2jp",
+ "book": "sr-oracle-live",
  "rev": 2,
  "through": 1,
  "chapters": 1,
