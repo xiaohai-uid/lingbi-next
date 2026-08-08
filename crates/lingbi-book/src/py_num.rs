@@ -7,15 +7,16 @@ pub(crate) fn py_round2(x: f64) -> f64 {
     (x * 100.0).round_ties_even() / 100.0
 }
 
-/// `x·10` 的正确舍入（ties-even），不经中间 f64 乘法。
+/// `x·scale` 的正确舍入（ties-even），不经中间 f64 乘法。
 ///
-/// 引擎 `"%.1f"` / `round(x, 1)` 由 dtoa 对真实值正确舍入；朴素 `(x*10.0).round_ties_even()`
-/// 会先把真实值 ×10 舍入到 f64——当真实值贴近 .5 边界时被吸到整半点，随后
-/// ties-even 走错方向（如 budget_kb=0.95：真实值 9.4999…96 应舍为 9，朴素路径
-/// 得 9.5→10 显示 "1.0"，引擎 "0.9"；budget_kb=0.05 同理反向）。本实现按
-/// x = m·2^(exp-52) 的位表示精确计算 m·10·2^-s 与 2^(s-1) 的大小/相等关系（u128
-/// 整数运算，无二次舍入）。调用方数值 ∈ [0, 16)，m·10 ≤ 2^57，u128 足够。
-pub(crate) fn round10_ties_even(x: f64) -> i64 {
+/// 引擎 `"%.1f"` / `"%.2f"` / `round(x, 1)` 由 dtoa 对真实值正确舍入；朴素
+/// `(x*10.0).round_ties_even()` 会先把真实值 ×scale 舍入到 f64——当真实值贴近
+/// .5 边界时被吸到整半点，随后 ties-even 走错方向（如 0.95：真实值 9.4999…96
+/// 应舍为 9，朴素路径得 9.5→10 显示 "1.0"，引擎 "0.9"；0.05 同理反向）。本实现
+/// 按 x = m·2^(exp-52) 的位表示精确计算 m·scale·2^-s 与 2^(s-1) 的大小/相等关系
+/// （u128 整数运算，无二次舍入）。安全界：m < 2^53 且 m·scale < 2^60（scale ≤ 100
+/// 时满足），u128 足够。
+pub(crate) fn round_scale_ties_even(x: f64, scale: u64) -> i64 {
     if x == 0.0 {
         return 0;
     }
@@ -23,9 +24,9 @@ pub(crate) fn round10_ties_even(x: f64) -> i64 {
     let exp = ((bits >> 52) & 0x7ff) as i32 - 1023; // 归一化指数（值 = m·2^(exp-52)）
     let mant = (bits & ((1u64 << 52) - 1)) | (1u64 << 52);
     let s = 52 - exp; // 值 = m·2^-s
-    let n = (mant as u128) * 10;
+    let n = (mant as u128) * scale as u128;
     if s <= 0 {
-        // x·10 为整数（exp ≥ 52；调用方数值不可达，保守路径）
+        // x·scale 为整数（exp ≥ 52；调用方数值不可达，保守路径）
         return (n << (-s) as u32) as i64;
     }
     let q = n >> s;
@@ -43,10 +44,25 @@ pub(crate) fn round10_ties_even(x: f64) -> i64 {
     rounded as i64
 }
 
-/// Python `"%.1f"`：一位小数（ties-even，见 round10_ties_even）。
+/// `x·10` 的正确舍入（ties-even，见 round_scale_ties_even）。
+pub(crate) fn round10_ties_even(x: f64) -> i64 {
+    round_scale_ties_even(x, 10)
+}
+
+/// Python `"%.1f"`：一位小数（ties-even，见 round_scale_ties_even）。
 pub(crate) fn py_fmt_1f(x: f64) -> String {
     let tenths = round10_ties_even(x);
     format!("{}.{}", tenths.div_euclid(10), tenths.rem_euclid(10))
+}
+
+/// Python `"%.2f"`：两位小数（ties-even）。
+pub(crate) fn py_fmt_2f(x: f64) -> String {
+    let hundredths = round_scale_ties_even(x, 100);
+    format!(
+        "{}.{:02}",
+        hundredths.div_euclid(100),
+        hundredths.rem_euclid(100)
+    )
 }
 
 /// Python `round(x, 1)`：一位小数（ties-even）。
