@@ -1852,6 +1852,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "lingbi-book"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "glob",
+ "indexmap 2.14.0",
+ "lingbi-contracts",
+ "lingbi-storage",
+ "regex",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "lingbi-commands"
+version = "0.1.0"
+dependencies = [
+ "lingbi-book",
+ "lingbi-contracts",
+ "lingbi-recovery",
+ "lingbi-storage",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "lingbi-contracts"
 version = "0.1.0"
 dependencies = [
@@ -1865,11 +1893,14 @@ dependencies = [
  "chrono",
  "lingbi-ai",
  "lingbi-application",
+ "lingbi-book",
+ "lingbi-commands",
  "lingbi-contracts",
  "lingbi-domain",
  "lingbi-import-export",
  "lingbi-recovery",
  "lingbi-security",
+ "lingbi-storage",
  "lingbi-writing",
  "serde",
  "serde_json",

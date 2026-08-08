@@ -14,6 +14,7 @@ members = [
   "crates/lingbi-import-export",
   "crates/lingbi-security",
   "crates/lingbi-book",
+  "crates/lingbi-commands",
   "crates/lingbi-ffi",
   "e2e/desktop",
   "e2e/desktop-real",

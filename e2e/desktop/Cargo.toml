@@ -7,6 +7,8 @@ edition = "2024"
 async-stream = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
 lingbi-ai = { path = "../../crates/lingbi-ai" }
+lingbi-book = { path = "../../crates/lingbi-book" }
+lingbi-commands = { path = "../../crates/lingbi-commands" }
 lingbi-contracts = { path = "../../crates/lingbi-contracts" }
 lingbi-application = { path = "../../crates/lingbi-application" }
 lingbi-domain = { path = "../../crates/lingbi-domain" }

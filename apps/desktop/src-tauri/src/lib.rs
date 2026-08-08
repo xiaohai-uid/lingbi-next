@@ -1,3 +1,4 @@
+mod book_cmds;
 mod recent;
 
 use lingbi_ai::{AiError, CancellationToken};
@@ -28,6 +29,8 @@ struct DesktopState {
     generation_services: Mutex<HashMap<String, Arc<GenerationService>>>,
     generation_tokens: Mutex<HashMap<Uuid, CancellationToken>>,
     recent: Mutex<Option<RecentProjects>>,
+    /// Book V3 会话根（P4 命令层；`open_book` 设置，其余命令从中取书仓）。
+    book_root: Mutex<Option<String>>,
 }
 
 #[derive(Clone)]
@@ -64,7 +67,7 @@ impl From<CurrentSession> for SessionDto {
     }
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 struct CommandErrorDto {
     code: String,
     message: String,
@@ -75,6 +78,16 @@ impl From<AppError> for CommandErrorDto {
     fn from(error: AppError) -> Self {
         Self {
             code: format!("{:?}", error.code),
+            message: error.message,
+            retryable: error.retryable,
+        }
+    }
+}
+
+impl From<lingbi_commands::CommandError> for CommandErrorDto {
+    fn from(error: lingbi_commands::CommandError) -> Self {
+        Self {
+            code: error.code,
             message: error.message,
             retryable: error.retryable,
         }
@@ -874,6 +887,23 @@ pub fn run() {
             candidate_list,
             candidate_adopt,
             candidate_reject,
+            // P4 Book V3 唯一边界（16 命令）
+            book_cmds::open_book,
+            book_cmds::get_tracking_state,
+            book_cmds::get_outline,
+            book_cmds::create_chapter,
+            book_cmds::open_chapter,
+            book_cmds::save_chapter,
+            book_cmds::build_contract,
+            book_cmds::build_brief,
+            book_cmds::run_check,
+            book_cmds::create_candidate,
+            book_cmds::adopt_candidate,
+            book_cmds::reject_candidate,
+            book_cmds::run_workflow,
+            book_cmds::resume_workflow,
+            book_cmds::cancel_workflow,
+            book_cmds::get_run_ledger,
         ])
         .run(tauri::generate_context!())
         .expect("error while running LingBi Next");
