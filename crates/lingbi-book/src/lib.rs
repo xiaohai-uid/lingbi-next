@@ -6,6 +6,7 @@
 //! 模块序（P2 票据）：config → book state → tracking state → derived views →
 //! checks → gates → contract → context → brief → revision → resume → batch → learn → report。
 
+pub mod brief;
 pub mod checks;
 pub mod config;
 pub mod contract;
@@ -17,6 +18,7 @@ pub mod views;
 
 mod json_engine;
 
+pub use brief::build_brief;
 pub use checks::{collect_checks, redlines, CheckResult};
 pub use config::{load_config, BookConfig};
 pub use contract::{build_contract, load_outline, split_list, Contract};
