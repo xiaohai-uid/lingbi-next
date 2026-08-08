@@ -171,7 +171,7 @@ async fn project_create(
         .lock()
         .map_err(|_| command_error("LOCK_ERROR", "document service lock", false))?
         .insert(root.clone(), documents);
-    record_recent(&state, &name, &root);
+    record_recent(&state, &name, &root, "v2");
     let current = CurrentSession {
         root,
         snapshot,
@@ -216,7 +216,7 @@ async fn project_open(
         .lock()
         .map_err(|_| command_error("LOCK_ERROR", "document service lock", false))?
         .insert(root.clone(), documents);
-    record_recent(&state, &snapshot.project.name, &root);
+    record_recent(&state, &snapshot.project.name, &root, "v2");
     let current = CurrentSession {
         root,
         snapshot,
@@ -731,13 +731,13 @@ async fn generation_settings(
     })
 }
 
-fn record_recent(state: &State<'_, DesktopState>, name: &str, root: &str) {
+fn record_recent(state: &State<'_, DesktopState>, name: &str, root: &str, kind: &str) {
     let recent_guard = match state.recent.lock() {
         Ok(guard) => guard,
         Err(_) => return,
     };
     if let Some(recent) = recent_guard.as_ref() {
-        let _ = recent.record(name, root);
+        let _ = recent.record(name, root, kind);
     }
 }
 
@@ -887,11 +887,13 @@ pub fn run() {
             candidate_list,
             candidate_adopt,
             candidate_reject,
-            // P4 Book V3 唯一边界（16 命令）
+            // P4 Book V3 唯一边界（16 命令）+ P5-1 增量（create_book/list_chapters）
+            book_cmds::create_book,
             book_cmds::open_book,
             book_cmds::get_tracking_state,
             book_cmds::get_outline,
             book_cmds::create_chapter,
+            book_cmds::list_chapters,
             book_cmds::open_chapter,
             book_cmds::save_chapter,
             book_cmds::build_contract,

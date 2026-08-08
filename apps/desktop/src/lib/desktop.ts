@@ -50,6 +50,8 @@ export interface RecentProject {
   name: string;
   root: string;
   last_opened: string;
+  /// "v2" = V2 应用模型；"v3" = Book V3 书仓（P5-1 起）；旧记录缺省 "v2"。
+  kind?: string;
 }
 
 export interface ProviderDefinition {
@@ -78,6 +80,39 @@ export interface CommandError {
   code: string;
   message: string;
   retryable: boolean;
+}
+
+// ---- Book V3（P4 命令层 / P5-1 前端接线）----
+
+export interface BookSession {
+  name: string;
+  root: string;
+  managed: boolean;
+  state_revision: number;
+  chapter_count: number;
+  recovered: number;
+  recovery_failed: number;
+  recovery_errors: string[];
+}
+
+export interface Chapter {
+  ch: number;
+  title: string;
+  frontmatter: Record<string, string>;
+  body: string;
+  content_hash: string;
+}
+
+export interface ChapterMeta {
+  ch: number;
+  title: string;
+}
+
+export interface TxReceipt {
+  tx_id: string;
+  rel_path: string;
+  after_revision: number | null;
+  after_content_hash: string;
 }
 
 export interface GenerationEvent {
@@ -117,6 +152,23 @@ const mockSessions = new Map<string, Session>();
 const mockDocuments = new Map<string, Document[]>();
 const mockContents = new Map<string, string>();
 const mockCandidates = new Map<string, GeneratedCandidate[]>();
+// Book V3 mock（vitest 非 Tauri 环境）：root → 书仓内存态
+const mockBooks = new Map<
+  string,
+  {
+    name: string;
+    chapters: Map<number, { title: string; content: string; hash: string }>;
+  }
+>();
+
+function mockHash(content: string): string {
+  // 确定性伪哈希（非加密；mock 层只用于 CAS 相等性比较）
+  let value = 5381;
+  for (const char of content) {
+    value = (value * 33 + char.charCodeAt(0)) >>> 0;
+  }
+  return value.toString(16).padStart(64, "0");
+}
 export let lastProviderConfig: {
   providerId: string;
   key: string;
@@ -242,11 +294,20 @@ export const desktop = {
     if (inTauri()) {
       return invoke<RecentProject[]>("recent_projects");
     }
-    return [...mockSessions.entries()].map(([root, session]) => ({
-      name: session.project.name,
-      root,
-      last_opened: new Date().toISOString(),
-    }));
+    return [
+      ...[...mockSessions.entries()].map(([root, session]) => ({
+        name: session.project.name,
+        root,
+        last_opened: new Date().toISOString(),
+        kind: "v2",
+      })),
+      ...[...mockBooks.entries()].map(([root, book]) => ({
+        name: book.name,
+        root,
+        last_opened: new Date().toISOString(),
+        kind: "v3",
+      })),
+    ];
   },
 
   async listDocuments(): Promise<Document[]> {
@@ -455,12 +516,17 @@ export const desktop = {
         expectedRevision,
       });
     }
-    const session = [...mockSessions.values()].at(-1);
-    if (!session) throw new Error("no session");
+    const candidates = [...mockCandidates.values()].flat();
+    const candidate = candidates.find((item) => item.id === candidateId);
     return {
-      ...session.current_document,
-      revision: expectedRevision + 1,
-      updated_at: new Date().toISOString(),
+      id: "d1",
+      project_id: "p1",
+      title: "第一章",
+      order: 0,
+      revision: (candidate?.base_revision ?? expectedRevision) + 1,
+      content_hash: "",
+      created_at: "",
+      updated_at: "",
     };
   },
 
@@ -468,5 +534,118 @@ export const desktop = {
     if (inTauri()) {
       await invoke("candidate_reject", { candidateId });
     }
+  },
+
+  // ---- Book V3（P5-1）----
+
+  async createBook(root: string, name: string): Promise<BookSession> {
+    if (inTauri()) {
+      return invoke<BookSession>("create_book", { root, name });
+    }
+    mockBooks.set(root, { name, chapters: new Map() });
+    return {
+      name,
+      root,
+      managed: true,
+      state_revision: 1,
+      chapter_count: 0,
+      recovered: 0,
+      recovery_failed: 0,
+      recovery_errors: [],
+    };
+  },
+
+  async openBook(root: string): Promise<BookSession> {
+    if (inTauri()) {
+      return invoke<BookSession>("open_book", { root });
+    }
+    const book = mockBooks.get(root);
+    if (!book) throw new Error(`book not found: ${root}`);
+    return {
+      name: book.name,
+      root,
+      managed: true,
+      state_revision: 1,
+      chapter_count: book.chapters.size,
+      recovered: 0,
+      recovery_failed: 0,
+      recovery_errors: [],
+    };
+  },
+
+  async listChapters(): Promise<ChapterMeta[]> {
+    if (inTauri()) {
+      return invoke<ChapterMeta[]>("list_chapters");
+    }
+    const book = [...mockBooks.values()].at(-1);
+    if (!book) return [];
+    return [...book.chapters.entries()]
+      .map(([ch, entry]) => ({ ch, title: entry.title }))
+      .sort((a, b) => a.ch - b.ch);
+  },
+
+  async createChapter(title: string): Promise<Chapter> {
+    if (inTauri()) {
+      return invoke<Chapter>("create_chapter", { title });
+    }
+    const book = [...mockBooks.values()].at(-1);
+    if (!book) throw new Error("no book session");
+    const ch = book.chapters.size + 1;
+    const entry = { title, content: "", hash: mockHash("") };
+    book.chapters.set(ch, entry);
+    return {
+      ch,
+      title,
+      frontmatter: { title, chapter: String(ch).padStart(3, "0") },
+      body: "",
+      content_hash: entry.hash,
+    };
+  },
+
+  async openChapter(ch: number): Promise<Chapter> {
+    if (inTauri()) {
+      return invoke<Chapter>("open_chapter", { ch });
+    }
+    const book = [...mockBooks.values()].at(-1);
+    if (!book) throw new Error("no book session");
+    const entry = book.chapters.get(ch);
+    if (!entry) throw new Error(`chapter ${ch} not found`);
+    return {
+      ch,
+      title: entry.title,
+      frontmatter: { title: entry.title, chapter: String(ch).padStart(3, "0") },
+      body: entry.content,
+      content_hash: entry.hash,
+    };
+  },
+
+  async saveChapter(
+    ch: number,
+    content: string,
+    expectedHash?: string,
+  ): Promise<TxReceipt> {
+    if (inTauri()) {
+      return invoke<TxReceipt>("save_chapter", { ch, content, expectedHash });
+    }
+    const book = [...mockBooks.values()].at(-1);
+    if (!book) throw new Error("no book session");
+    const entry = book.chapters.get(ch);
+    if (!entry) throw new Error(`chapter ${ch} not found`);
+    // CAS：期望哈希与当前不符 → DocumentConflict（与真实命令层同语义）
+    if (expectedHash && expectedHash !== entry.hash) {
+      throw {
+        code: "DocumentConflict",
+        message: "外部修改了正文,存盘被拒(用户字节保留);请重新 open_chapter 后再存",
+        retryable: false,
+      };
+    }
+    entry.content = content;
+    entry.hash = mockHash(content);
+    return {
+      tx_id: crypto.randomUUID(),
+      rel_path: `定稿/正文/${String(ch).padStart(3, "0")}-${entry.title}.md`,
+      after_revision: null,
+      after_content_hash: entry.hash,
+    };
   },
 };

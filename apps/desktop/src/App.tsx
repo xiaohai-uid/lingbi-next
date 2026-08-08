@@ -119,7 +119,8 @@ function Welcome() {
   const [temperature, setTemperature] = useState("0.7");
   const [maxTokens, setMaxTokens] = useState("2048");
 
-  const createProject = useAppStore((state) => state.createProject);
+  const bookCreate = useAppStore((state) => state.bookCreate);
+  const bookOpen = useAppStore((state) => state.bookOpen);
   const openProject = useAppStore((state) => state.openProject);
   const loadRecent = useAppStore((state) => state.loadRecent);
   const loadProviders = useAppStore((state) => state.loadProviders);
@@ -158,8 +159,13 @@ function Welcome() {
     return desktop.projectDefaultRoot(value);
   }
 
-  function onOpenRecent(root: string) {
-    void openProject(root);
+  function onOpenRecent(root: string, kind?: string) {
+    // P5-1：recent 混 V2/V3——按格式判别分发，旧 V2 条目走 V2 打开
+    if (kind === "v3") {
+      void bookOpen(root);
+    } else {
+      void openProject(root);
+    }
   }
 
   const selectedProvider =
@@ -225,7 +231,12 @@ function Welcome() {
               <button
                 disabled={!name.trim()}
                 onClick={() =>
-                  void createProject(name.trim(), useCustomRoot ? customRoot : undefined)
+                  void bookCreate(
+                    useCustomRoot && customRoot.trim()
+                      ? customRoot.trim()
+                      : defaultRoot || `文档/LingBi/${name.trim()}`,
+                    name.trim(),
+                  )
                 }
               >
                 创建项目
@@ -244,7 +255,7 @@ function Welcome() {
               <ul className="recent-list">
                 {recentProjects.map((project) => (
                   <li key={project.root}>
-                    <button onClick={() => onOpenRecent(project.root)}>
+                    <button onClick={() => onOpenRecent(project.root, project.kind)}>
                       <strong>{project.name}</strong>
                       <span>{project.root}</span>
                     </button>
@@ -264,7 +275,7 @@ function Welcome() {
                 />
               </label>
               <div className="actions">
-                <button disabled={!openRoot.trim()} onClick={() => void openProject(openRoot.trim())}>
+                <button disabled={!openRoot.trim()} onClick={() => void bookOpen(openRoot.trim())}>
                   打开
                 </button>
               </div>
@@ -479,8 +490,20 @@ function RecoveryBanner() {
 
 function SaveStatus() {
   const session = useAppStore((state) => state.session);
+  const book = useAppStore((state) => state.book);
   const status = useAppStore((state) => state.status);
   const error = useAppStore((state) => state.error);
+  const saveState = useAppStore((state) => state.saveState);
+  // Book V3 模式（P5-1）：保存状态由命令层回执驱动
+  const errorCode = useAppStore((state) => state.errorCode);
+  if (book) {
+    if (saveState === "saving") return <span className="status">正在保存…</span>;
+    if (saveState === "conflict" && errorCode === "DocumentConflict")
+      return <span className="error">保存失败：内容已被外部修改，请重新打开章节</span>;
+    if (saveState === "saved") return <span className="status">已保存</span>;
+    if (error) return <span className="error">保存失败</span>;
+    return <span className="unsaved">未保存</span>;
+  }
   if (status === "正在保存…") return <span className="status">正在保存…</span>;
   if (status === "已保存") return <span className="status">已保存</span>;
   if (status === "保存失败" || error) return <span className="error">保存失败</span>;
@@ -488,9 +511,136 @@ function SaveStatus() {
   return <span className="status">已保存</span>;
 }
 
+/// Book V3 编辑器（P5-1：建章/读章/存章/保存状态；AI 面随 P5-2 接入）。
+function BookEditor() {
+  const book = useAppStore((state) => state.book);
+  const bookChapters = useAppStore((state) => state.bookChapters);
+  const currentCh = useAppStore((state) => state.currentCh);
+  const chapterContent = useAppStore((state) => state.chapterContent);
+  const status = useAppStore((state) => state.status);
+  const error = useAppStore((state) => state.error);
+  const errorCode = useAppStore((state) => state.errorCode);
+  const chapterCreate = useAppStore((state) => state.chapterCreate);
+  const chapterOpen = useAppStore((state) => state.chapterOpen);
+  const chapterSave = useAppStore((state) => state.chapterSave);
+  const [newTitle, setNewTitle] = useState("");
+
+  const setChapterContent = (content: string) =>
+    useAppStore.setState({ chapterContent: content, saveState: "idle" });
+
+  // 自动保存：2 秒防抖 + 内容无变化跳过 + CAS 守卫（哈希由 chapterOpen/
+  // 上次回执持有，外部修改即 conflict 状态，用户字节保留）
+  useEffect(() => {
+    const book = useAppStore.getState().book;
+    if (!book || currentCh === null) return;
+    const timer = window.setTimeout(() => {
+      const state = useAppStore.getState();
+      if (state.chapterContent !== state.lastSavedChapterContent) {
+        void state.chapterSave();
+      }
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [chapterContent, currentCh]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void chapterSave();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [chapterSave]);
+
+  if (!book) return <Welcome />;
+
+  return (
+    <main className="editor-shell">
+      <aside className="chapters">
+        <h2>章节</h2>
+        {bookChapters.map((chapter) => (
+          <button
+            key={chapter.ch}
+            className={chapter.ch === currentCh ? "active" : ""}
+            onClick={() => void chapterOpen(chapter.ch)}
+          >
+            {chapter.title}
+          </button>
+        ))}
+        <div className="new-chapter">
+          <input
+            aria-label="新章节标题"
+            value={newTitle}
+            onChange={(event) => setNewTitle(event.target.value)}
+            placeholder="章节标题"
+          />
+          <button
+            disabled={!newTitle.trim()}
+            onClick={() => {
+              void chapterCreate(newTitle.trim());
+              setNewTitle("");
+            }}
+          >
+            新建章节
+          </button>
+        </div>
+        <details className="advanced">
+          <summary>高级功能</summary>
+          <button onClick={() => useAppStore.setState({ selectedTab: "welcome" })}>
+            返回首页
+          </button>
+        </details>
+      </aside>
+      <section className="editor">
+        <header>
+          <strong>
+            {currentCh !== null
+              ? bookChapters.find((c) => c.ch === currentCh)?.title ?? `第${currentCh}章`
+              : book.name}
+          </strong>
+          <div className="header-status">
+            {status && !["正在保存…", "已保存", "保存失败"].includes(status) ? (
+              <span className="hint">{status}</span>
+            ) : null}
+            <SaveStatus />
+          </div>
+        </header>
+        <CodeMirror
+          value={chapterContent}
+          height="calc(100vh - 96px)"
+          extensions={[markdown()]}
+          onChange={setChapterContent}
+        />
+        <footer>
+          <button disabled={currentCh === null} onClick={() => void chapterSave()}>
+            保存
+          </button>
+        </footer>
+        {error ? (
+          <ErrorPanel
+            error={{
+              code: errorCode ?? "UNKNOWN",
+              message: error,
+              retryable: false,
+            }}
+          />
+        ) : null}
+      </section>
+      <aside className="candidate">
+        <h2>AI 助手</h2>
+        <p>AI 写作功能将在下一步接入（P5-2）</p>
+      </aside>
+    </main>
+  );
+}
+
 function Editor() {
-  const [instruction, setInstruction] = useState("生成一个雨夜开场");
   const session = useAppStore((state) => state.session);
+  const book = useAppStore((state) => state.book);
+  const [instruction, setInstruction] = useState("生成一个雨夜开场");
+  // Book V3 模式优先（P5-1）；V2 会话模式保留（AI 生成/导出在 P5-2/P5-4 迁移）
+  if (book) return <BookEditor />;
   const documents = useAppStore((state) => state.documents);
   const documentContent = useAppStore((state) => state.documentContent);
   const candidate = useAppStore((state) => state.candidate);

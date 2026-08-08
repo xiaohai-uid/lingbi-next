@@ -1,10 +1,11 @@
 //! P4 核心服务层：Book V3 唯一边界（#21）。
 //!
-//! 16 个命令构成 UI（Tauri 壳 / 未来任何宿主）触达书仓的唯一通道：
+//! 18 个命令（P4 16 + P5-1 增量 2）构成 UI（Tauri 壳 / 未来任何宿主）触达
+//! 书仓的唯一通道：
 //!
 //! ```text
-//! open_book / get_tracking_state / get_outline        —— 会话与状态
-//! create_chapter / open_chapter / save_chapter        —— 章正文
+//! create_book / open_book / get_tracking_state / get_outline —— 会话与状态
+//! create_chapter / list_chapters / open_chapter / save_chapter —— 章正文
 //! build_contract / build_brief / run_check            —— 写作辅助
 //! create_candidate / adopt_candidate / reject_candidate —— 候选稿
 //! run_workflow / resume_workflow / cancel_workflow / get_run_ledger —— 工作流
@@ -114,6 +115,13 @@ pub struct ChapterDto {
     /// 正文（不含 front matter；引擎 `body()` 语义，含前导空行）。
     pub body: String,
     pub content_hash: String,
+}
+
+/// 章节列表项（P5-1：UI 章列表 = 书仓内全部章文件，含未结算章）。
+#[derive(Debug, Clone, Serialize)]
+pub struct ChapterMetaDto {
+    pub ch: i64,
+    pub title: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -228,6 +236,56 @@ pub fn get_tracking_state(root: &str) -> Result<lingbi_book::TrackingState, Comm
     load_state(Path::new(root)).map_err(CommandError::from)
 }
 
+/// 新建书（P5-1，spec user story 1「新建书」）：在 `root` 下创建完整
+/// Book V3 书仓——book.yaml（引擎默认配置窗口）+ 追踪状态初始化 +
+/// `.lingbi/` 事务层（新建即托管，与 P3 审计「应用建书时 ensure_tx_layer」
+/// 一致）。对已存在书仓幂等（init_state 无操作 + open_book 语义）。
+/// 返回会话 DTO；书仓内其它内容（大纲/文风等）由作者经命令层逐步创建。
+pub fn create_book(root: &str, name: &str) -> Result<BookSessionDto, CommandError> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(CommandError::new("INVALID_BOOK_NAME", "书名不能为空", false));
+    }
+    if name.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|'])
+        || name.chars().any(char::is_control)
+    {
+        return Err(CommandError::new(
+            "INVALID_BOOK_NAME",
+            format!("书名含 Windows 非法字符: {name}"),
+            false,
+        ));
+    }
+    let root_path = Path::new(root);
+    std::fs::create_dir_all(root_path).map_err(|e| {
+        CommandError::new(
+            "DISK_WRITE_FAILED",
+            format!("创建书仓目录失败: {e}"),
+            false,
+        )
+    })?;
+    // 先落地事务层，再初始化——book.yaml 与追踪状态首写都经事务门
+    // （managed 下 init_state → save_state 走 write_authoritative_state，
+    // book.yaml 经 write_authoritative 首次写无 CAS），维持 P3 审计
+    // 「权威路径无绕过事务」结论（建仓写 = 创建时一次性写，同样入账）。
+    tx::ensure_tx_layer(root_path).map_err(CommandError::from)?;
+    let yaml = format!(
+        "---\nname: {name}\nstatus: writing\ntotal_chapters: {}\nmin_words_per_chapter: {}\nmax_words_per_chapter: {}\ntarget_words: {}\n---\n",
+        lingbi_book::config::DEFAULT_TOTAL_CHAPTERS,
+        lingbi_book::config::DEFAULT_MIN_WORDS,
+        lingbi_book::config::DEFAULT_MAX_WORDS,
+        lingbi_book::config::DEFAULT_TARGET_WORDS,
+    );
+    if !root_path.join("book.yaml").exists() {
+        tx::write_authoritative(root_path, "book.yaml", yaml.as_bytes(), None, None)
+            .map_err(CommandError::from)?;
+    }
+    lingbi_book::tracking::init_state(root_path).map_err(CommandError::from)?;
+    // 书名以入参为准（root basename 可能 ≠ 书名，如自定义保存位置）
+    let mut dto = open_book(root)?;
+    dto.name = name.to_owned();
+    Ok(dto)
+}
+
 /// 细纲蓝图（大纲/细纲蓝图 表，引擎 `load_outline`）。
 pub fn get_outline(root: &str) -> Result<Vec<OutlineDto>, CommandError> {
     Ok(lingbi_book::load_outline(Path::new(root))
@@ -253,7 +311,8 @@ pub fn get_outline(root: &str) -> Result<Vec<OutlineDto>, CommandError> {
 /// 建章：`定稿/正文/{ch:03}-{title}.md`（frontmatter 模板 + 空正文），
 /// 经事务门落盘（managed）。返回新章；`title` 须为 Windows 合法文件名。
 pub fn create_chapter(root: &str, title: &str) -> Result<ChapterDto, CommandError> {
-    if title.trim().is_empty() {
+    let title = title.trim();
+    if title.is_empty() {
         return Err(CommandError::new("INVALID_TITLE", "章标题不能为空", false));
     }
     if title.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|'])
@@ -310,6 +369,25 @@ pub fn open_chapter(root: &str, ch: i64) -> Result<ChapterDto, CommandError> {
         body,
         content_hash: lingbi_storage::sha256_hex(&bytes),
     })
+}
+
+/// 章节列表（P5-1）：书仓内全部正文文件（`定稿/正文/NNN-*.md`，章号序），
+/// 含未结算章——UI 章列表以此为准（tracking 仅含已结算章，不适合作列表）。
+pub fn list_chapters(root: &str) -> Result<Vec<ChapterMetaDto>, CommandError> {
+    let root_path = Path::new(root);
+    let mut out: Vec<ChapterMetaDto> = chapter_files(root_path)
+        .into_iter()
+        .map(|f| {
+            let ch = chapter_num(&f);
+            let path = root_path.join(BODY_DIR).join(&f);
+            let title = frontmatter(&path)
+                .map(|fm| fm.get("title").cloned().unwrap_or_default())
+                .unwrap_or_default();
+            ChapterMetaDto { ch, title }
+        })
+        .collect();
+    out.sort_by_key(|c| c.ch);
+    Ok(out)
 }
 
 /// 存章：正文替换 body 段，frontmatter 原样保留；`expected_hash`
@@ -731,6 +809,42 @@ mod tests {
     // ---- open_book / 会话 ----
 
     #[test]
+    fn create_book_builds_managed_book_and_reopens() {
+        let dir = TempDir::new().expect("tempdir");
+        let root = dir.path().join("我的小说").to_string_lossy().into_owned();
+        let dto = create_book(&root, "我的小说").expect("create");
+        assert!(dto.managed);
+        assert_eq!(dto.name, "我的小说");
+        assert_eq!(dto.state_revision, 1);
+        // 书仓结构齐全：book.yaml + 追踪 + 事务层六目录
+        assert!(Path::new(&root).join("book.yaml").exists());
+        assert!(Path::new(&root).join("追踪/_tracking-state.json").exists());
+        for sub in lingbi_storage::book_v3::TX_LAYER_DIRS {
+            assert!(Path::new(&root).join(".lingbi").join(sub).is_dir());
+        }
+        // 幂等：再次建书 = 打开既有书仓
+        let dto2 = create_book(&root, "我的小说").expect("recreate");
+        assert!(dto2.managed);
+        assert_eq!(dto2.state_revision, 1);
+        // 建章可用
+        let ch = create_chapter(&root, "开局").expect("chapter");
+        assert_eq!(ch.ch, 1);
+        assert!(Path::new(&root).join("定稿/正文/001-开局.md").exists());
+    }
+
+    #[test]
+    fn create_book_rejects_empty_and_illegal_names() {
+        let dir = TempDir::new().expect("tempdir");
+        let root = dir.path().to_string_lossy().into_owned();
+        let err = create_book(&root, "  ").expect_err("empty");
+        assert_eq!(err.code, "INVALID_BOOK_NAME");
+        let err = create_book(&root, "a/b").expect_err("illegal");
+        assert_eq!(err.code, "INVALID_BOOK_NAME");
+        let err = create_book(&root, "a\nb").expect_err("control");
+        assert_eq!(err.code, "INVALID_BOOK_NAME");
+    }
+
+    #[test]
     fn open_book_legacy_book_without_lingbi() {
         let (_dir, root) = init_book();
         let dto = open_book(&root).expect("open");
@@ -859,6 +973,24 @@ mod tests {
         assert!(!ledger.receipts.is_empty());
         let reopened = open_chapter(&root, 1).expect("open");
         assert!(reopened.body.contains("managed 书仓候选正文"));
+    }
+
+    #[test]
+    fn list_chapters_enumerates_all_body_files_including_unsettled() {
+        let (_dir, root) = init_book();
+        create_chapter(&root, "夜访").expect("create");
+        create_chapter(&root, "拜访").expect("create");
+        let opened = open_chapter(&root, 1).expect("open");
+        save_chapter(&root, 1, "正文", Some(opened.content_hash)).expect("save");
+        let list = list_chapters(&root).expect("list");
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].ch, 1);
+        assert_eq!(list[0].title, "夜访");
+        assert_eq!(list[1].ch, 2);
+        assert_eq!(list[1].title, "拜访");
+        // 未结算章也在列表（tracking 只有已结算章）
+        let tracking = get_tracking_state(&root).expect("tracking");
+        assert!(tracking.chapters.is_empty());
     }
 
     #[test]

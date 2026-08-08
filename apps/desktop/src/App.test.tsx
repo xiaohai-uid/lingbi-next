@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
@@ -21,10 +21,18 @@ vi.mock("@uiw/react-codemirror", () => ({
   ),
 }));
 
-async function createNoviceProject(user: ReturnType<typeof userEvent.setup>) {
+/// Book V3 建书（P5-1）：开始写作 → 作品名 → 创建项目（create_book 命令）。
+async function createNoviceBook(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: /开始写作/ }));
   await user.type(screen.getByLabelText("作品名"), "我的小说");
   await user.click(screen.getByRole("button", { name: "创建项目" }));
+}
+
+async function createBookWithChapter(user: ReturnType<typeof userEvent.setup>) {
+  await createNoviceBook(user);
+  await user.type(screen.getByLabelText("新章节标题"), "第一章");
+  await user.click(screen.getByRole("button", { name: "新建章节" }));
+  await screen.findByRole("button", { name: "第一章" });
 }
 
 describe("LingBi Next desktop shell", () => {
@@ -46,6 +54,13 @@ describe("LingBi Next desktop shell", () => {
       aiConfigured: false,
       lastExport: null,
       streamingText: "",
+      // Book V3（P5-1）
+      book: null,
+      bookChapters: [],
+      currentCh: null,
+      chapterContent: "",
+      chapterHash: "",
+      saveState: "idle",
     });
   });
 
@@ -56,37 +71,65 @@ describe("LingBi Next desktop shell", () => {
     expect(screen.getByRole("button", { name: /连接 AI/ })).toBeInTheDocument();
   });
 
-  it("creates a project with only a name (no path knowledge needed)", async () => {
+  it("creates a book with only a name (no path knowledge needed)", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await createNoviceProject(user);
+    await createNoviceBook(user);
 
-    expect(await screen.findByLabelText("编辑器")).toHaveValue(
-      "# 第一章\n\n浏览器预览模式",
-    );
-    expect(screen.getByText("项目已创建")).toBeInTheDocument();
+    expect(await screen.findByText("书仓已创建")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "保存" })).toBeInTheDocument();
+    // Book V3 建书后无自动章——首章由「新建章节」创建
+    expect(screen.queryByRole("button", { name: "第一章" })).not.toBeInTheDocument();
   });
 
-  it("first chapter appears automatically after creation", async () => {
+  it("creates a first chapter after book creation", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await createNoviceProject(user);
+    await createNoviceBook(user);
+
+    await user.type(screen.getByLabelText("新章节标题"), "第一章");
+    await user.click(screen.getByRole("button", { name: "新建章节" }));
 
     expect(
       await screen.findByRole("button", { name: "第一章" }),
     ).toBeInTheDocument();
-  });
-
-  it("the custom save location is hidden behind advanced options", () => {
-    render(<App />);
-    expect(screen.queryByLabelText("自定义保存位置")).not.toBeInTheDocument();
+    expect(screen.getByText("章节已创建")).toBeInTheDocument();
   });
 
   it("generates a candidate and adopts it into the editor", async () => {
+    // V2 生成流（P5-2 迁移前保留）：直接构造 V2 会话
+    const session = {
+      root: "/p/novel",
+      dirty: false,
+      recovered: false,
+      protected: false,
+      project: {
+        id: "p1",
+        name: "小说",
+        schema_version: 2,
+        created_at: "",
+        updated_at: "",
+      },
+      current_document: {
+        id: "d1",
+        project_id: "p1",
+        title: "第一章",
+        order: 0,
+        revision: 0,
+        content_hash: "",
+        created_at: "",
+        updated_at: "",
+      },
+    };
+    useAppStore.setState({
+      session,
+      documents: [session.current_document],
+      documentContent: "# 第一章\n\n浏览器预览模式",
+      selectedTab: "editor",
+      lastSavedContent: "# 第一章\n\n浏览器预览模式",
+    });
     const user = userEvent.setup();
     render(<App />);
-    await createNoviceProject(user);
     await user.click(screen.getByRole("button", { name: "生成" }));
 
     expect(
@@ -103,7 +146,9 @@ describe("LingBi Next desktop shell", () => {
   it("creates a second chapter and switches between chapters", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await createNoviceProject(user);
+    await createBookWithChapter(user);
+
+    await user.type(screen.getByLabelText("新章节标题"), "第二章");
     await user.click(screen.getByRole("button", { name: "新建章节" }));
 
     expect(
@@ -112,9 +157,12 @@ describe("LingBi Next desktop shell", () => {
     await user.click(screen.getByRole("button", { name: "第二章" }));
     expect(screen.getByLabelText("编辑器")).toHaveValue("");
     await user.click(screen.getByRole("button", { name: "第一章" }));
-    expect(screen.getByLabelText("编辑器")).toHaveValue(
-      "# 第一章\n\n浏览器预览模式",
-    );
+    expect(screen.getByLabelText("编辑器")).toHaveValue("");
+  });
+
+  it("the custom save location is hidden behind advanced options", () => {
+    render(<App />);
+    expect(screen.queryByLabelText("自定义保存位置")).not.toBeInTheDocument();
   });
 
   it("shows human-readable guidance for typed errors", () => {
@@ -306,15 +354,87 @@ describe("LingBi Next desktop shell", () => {
     expect(screen.getByText("已恢复上次未完成的保存")).toBeInTheDocument();
   });
 
-  it("keeps the save status visible", async () => {
+  it("keeps the save status visible (Book V3)", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await createNoviceProject(user);
+    await createBookWithChapter(user);
     expect(await screen.findByText("已保存")).toBeInTheDocument();
 
     const editor = screen.getByLabelText("编辑器");
     await user.clear(editor);
     await user.type(editor, "雨夜");
+    // 编辑后未保存（自动保存 2s 防抖）
     expect(screen.getByText("未保存")).toBeInTheDocument();
+  });
+
+  it("restarts and reopens the book with content intact (Book V3)", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await createBookWithChapter(user);
+
+    // 写正文并等待自动保存落盘（mock saveChapter）
+    const editor = screen.getByLabelText("编辑器");
+    await user.type(editor, "第一章正文：雨夜，林渊推开旧车站的门。");
+    await screen.findByText("已保存", undefined, { timeout: 4000 });
+
+    // 模拟重启：回到欢迎页（store 清空）+ 打开最近
+    act(() => {
+      useAppStore.setState({
+        book: null,
+        bookChapters: [],
+        currentCh: null,
+        chapterContent: "",
+        chapterHash: "",
+        saveState: "idle",
+        selectedTab: "welcome",
+      });
+    });
+    await user.click(screen.getByRole("button", { name: /打开已有作品/ }));
+    await user.click(screen.getByText("我的小说"));
+
+    // 书仓重开 → 打开第一章 → 正文完整
+    expect(await screen.findByText("书仓已打开")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "第一章" }));
+    expect(screen.getByLabelText("编辑器")).toHaveValue(
+      "第一章正文：雨夜，林渊推开旧车站的门。",
+    );
+  });
+
+  it("shows conflict guidance when an external edit blocks saving", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await createBookWithChapter(user);
+
+    // 外部修改：绕过 UI 直接改 mock 的章内容（哈希随之变化）
+    const { desktop } = await import("./lib/desktop");
+    await desktop.saveChapter(1, "外部修改后的内容");
+
+    // 编辑器仍持有旧哈希 → 保存被拒 → conflict 文案
+    await user.type(screen.getByLabelText("编辑器"), "作者的新正文");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(
+      await screen.findByText("保存失败：内容已被外部修改，请重新打开章节"),
+    ).toBeInTheDocument();
+
+    // 重新打开章节 → 恢复磁盘内容（用户字节保留）
+    await user.click(screen.getByRole("button", { name: "第一章" }));
+    expect(screen.getByLabelText("编辑器")).toHaveValue("外部修改后的内容");
+  });
+
+  it("flushes unsaved edits before switching chapters", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await createBookWithChapter(user);
+
+    // 输入后立即（防抖窗口内）切到第二章——编辑必须先落盘
+    await user.type(screen.getByLabelText("编辑器"), "第一章的未保存编辑");
+    await user.type(screen.getByLabelText("新章节标题"), "第二章");
+    await user.click(screen.getByRole("button", { name: "新建章节" }));
+
+    // 切回第一章 → 编辑内容完整（切章前已 flush）
+    await user.click(screen.getByRole("button", { name: "第一章" }));
+    expect(screen.getByLabelText("编辑器")).toHaveValue(
+      "第一章的未保存编辑",
+    );
   });
 });

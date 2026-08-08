@@ -17,7 +17,7 @@
 
 | # | v1 能力 | v1 成熟度 | 处置 | 落点/证据 |
 |---|---|---|---|---|
-| 1 | 项目与本地文档 | 主路径可用 | **REDESIGN** | v1 ProjectService/DocumentService（JSON 信封）→ Book V3 书仓（目录树）+ `lingbi-commands::open_book`（P4）；分片 1 |
+| 1 | 项目与本地文档 | 主路径可用 | **REDESIGN** | v1 ProjectService/DocumentService（JSON 信封）→ Book V3 书仓（目录树）+ `lingbi-commands::open_book`/`create_book`（P4/P5-1）；分片 1 |
 | 2 | 长文编辑器 | 部分接线 | **KEEP（改造）** | Quill → CodeMirror 已换（现有 Tauri shell）；保存经 `save_chapter` CAS + 状态可见；分片 1 |
 | 3 | 大纲、节拍与故事画布 | 部分接线 | **DEFER** | 引擎「细纲蓝图/总纲」为大纲唯一事实（`get_outline` 已暴露）；画布/节拍矩阵随 P9 产品 UI |
 | 4 | 候选稿、安全采纳与冲突保护 | 主路径可用 | **KEEP** | `create|adopt|reject_candidate`（P4）+ P3 事务门 CAS 取代 v1「先删再 rename」非原子路径；分片 2 |
@@ -84,5 +84,6 @@
 ## 3. 验收对照（#22）
 
 - [x] 审计矩阵落盘（31 项全量 KEEP/REDESIGN/DROP/DEFER + PARTIAL/BLOCKED_EXTERNAL/DISABLED 标注）
+- [x] 分片 1（项目/编辑/保存/重启）：真实 Windows E2E 绿（windows_novice_golden_path，release + tauri-driver + Edge WebDriver 151）
 - [ ] 每个纵向分片真实 Windows E2E 验收（P5-1 起逐片）
 - [x] PARTIAL/BLOCKED 能力如实标注不搬回（#19 RAG DROP、#29 市场情报 BLOCKED_EXTERNAL、#28 terminal DISABLED、#31 WebDAV PARTIAL/遥测 DROP）

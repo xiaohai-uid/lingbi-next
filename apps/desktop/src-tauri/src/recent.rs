@@ -18,6 +18,15 @@ pub struct RecentProject {
     pub name: String,
     pub root: String,
     pub last_opened: DateTime<Utc>,
+    /// 项目格式判别（P5-1）："v2" = V2 应用模型（project_create/open），
+    /// "v3" = Book V3 书仓（create_book/open_book）。旧记录无此字段，
+    /// serde 默认 "v2"——旧 V2 记录点击仍走 V2 打开，不误判为书仓。
+    #[serde(default = "default_kind")]
+    pub kind: String,
+}
+
+fn default_kind() -> String {
+    "v2".to_owned()
 }
 
 pub struct RecentProjects {
@@ -39,7 +48,7 @@ impl RecentProjects {
     }
 
     /// Upsert by root (move to front), cap the list, persist atomically.
-    pub fn record(&self, name: &str, root: &str) -> Result<Vec<RecentProject>, AppError> {
+    pub fn record(&self, name: &str, root: &str, kind: &str) -> Result<Vec<RecentProject>, AppError> {
         let mut projects = self.load()?;
         projects.retain(|project| project.root != root);
         projects.insert(
@@ -48,6 +57,7 @@ impl RecentProjects {
                 name: name.to_owned(),
                 root: root.to_owned(),
                 last_opened: Utc::now(),
+                kind: kind.to_owned(),
             },
         );
         projects.truncate(RECENT_LIMIT);
@@ -100,9 +110,9 @@ mod tests {
         let temp = TempDir::new().expect("temp dir");
         let recent = RecentProjects::new(temp.path().join("recent.json"));
 
-        let _ = recent.record("小说一", "/p/one").expect("one");
-        let _ = recent.record("小说二", "/p/two").expect("two");
-        let projects = recent.record("小说一", "/p/one").expect("one again");
+        let _ = recent.record("小说一", "/p/one", "v2").expect("one");
+        let _ = recent.record("小说二", "/p/two", "v2").expect("two");
+        let projects = recent.record("小说一", "/p/one", "v2").expect("one again");
 
         assert_eq!(projects.len(), 2);
         assert_eq!(projects[0].name, "小说一");
@@ -116,7 +126,7 @@ mod tests {
         let recent = RecentProjects::new(temp.path().join("recent.json"));
         for index in 0..(RECENT_LIMIT + 5) {
             recent
-                .record(&format!("小说{index}"), &format!("/p/{index}"))
+                .record(&format!("小说{index}"), &format!("/p/{index}"), "v2")
                 .expect("record");
         }
         let projects = recent.load().expect("load");
@@ -129,7 +139,7 @@ mod tests {
         let temp = TempDir::new().expect("temp dir");
         let path = temp.path().join("recent.json");
         RecentProjects::new(path.clone())
-            .record("我的小说", "/p/novel")
+            .record("我的小说", "/p/novel", "v2")
             .expect("record");
 
         let projects = RecentProjects::new(path).load().expect("load");

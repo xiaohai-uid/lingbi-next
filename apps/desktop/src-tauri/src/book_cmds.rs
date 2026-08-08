@@ -1,4 +1,5 @@
-//! P4 桌面壳：Book V3 命令的 Tauri 接线（16 命令）。
+//! P4 桌面壳：Book V3 命令的 Tauri 接线（P4 16 命令 + P5-1 增量 2 =
+//! create_book / list_chapters，共 18）。
 //!
 //! 全部命令逻辑在 `lingbi-commands`（workspace 内，可被 e2e/desktop 直接
 //! 测试）；本模块只做三件事：会话 root 持有（`open_book` 记录，无参命令
@@ -25,14 +26,32 @@ fn book_root(state: &State<'_, DesktopState>) -> Result<String, CommandErrorDto>
         })
 }
 
+/// 新建书（Book V3 建仓入口）：book.yaml + 追踪初始化 + 事务层，
+/// 幂等（对已存在书仓等价 open_book）。成功后记录会话 root 与最近作品。
+#[tauri::command]
+pub fn create_book(
+    state: State<'_, DesktopState>,
+    root: String,
+    name: String,
+) -> Result<lingbi_commands::BookSessionDto, CommandErrorDto> {
+    let dto = lingbi_commands::create_book(&root, &name).map_err(CommandErrorDto::from)?;
+    crate::record_recent(&state, &dto.name, &root, "v3");
+    *state
+        .book_root
+        .lock()
+        .map_err(|_| command_error("LOCK_ERROR", "book session lock", false))? = Some(root);
+    Ok(dto)
+}
+
 /// 打开书仓（Book V3 唯一入口）。managed 书仓先跑崩溃收敛恢复再幂等
-/// 落地事务层；legacy 书仓原样可开。成功后记录会话 root。
+/// 落地事务层；legacy 书仓原样可开。成功后记录会话 root 与最近作品。
 #[tauri::command]
 pub fn open_book(
     state: State<'_, DesktopState>,
     root: String,
 ) -> Result<lingbi_commands::BookSessionDto, CommandErrorDto> {
     let dto = lingbi_commands::open_book(&root).map_err(CommandErrorDto::from)?;
+    crate::record_recent(&state, &dto.name, &root, "v3");
     *state
         .book_root
         .lock()
@@ -67,6 +86,15 @@ pub fn create_chapter(
 ) -> Result<lingbi_commands::ChapterDto, CommandErrorDto> {
     let root = book_root(&state)?;
     lingbi_commands::create_chapter(&root, &title).map_err(CommandErrorDto::from)
+}
+
+/// 章节列表（书仓内全部正文文件，含未结算章；UI 章列表以此为准）。
+#[tauri::command]
+pub fn list_chapters(
+    state: State<'_, DesktopState>,
+) -> Result<Vec<lingbi_commands::ChapterMetaDto>, CommandErrorDto> {
+    let root = book_root(&state)?;
+    lingbi_commands::list_chapters(&root).map_err(CommandErrorDto::from)
 }
 
 /// 读章：frontmatter + 正文（不含 front matter）+ 当前文件哈希

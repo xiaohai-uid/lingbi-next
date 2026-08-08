@@ -47,6 +47,7 @@ Book V3 权威路径 = `book.yaml`、`定稿/**`、`文风/金句库/**`、`文�
 | `learn::absorb_review` | `文风/审查反例库.md` authoritative/append-only | 经事务门（managed）/引擎路径（legacy）✓ |
 | `cmd_commit` → `tx::write_version_snapshot` | `.lingbi/versions/…` authoritative | 经事务门（首次写无 CAS，照常 journal+回执）✓ |
 | `lingbi-commands::write_body`（P4 #21 命令层唯一写入口：create/save_chapter、adopt_candidate） | `定稿/正文/**` authoritative | managed 经 `tx::write_authoritative`；legacy 走引擎纪律 tmp+rename（与 save_state legacy 分支同构）✓ |
+| `lingbi-commands::create_book`（P5-1 #32 建仓：book.yaml 首写 + init_state 首写） | `book.yaml`、`追踪/_tracking-state.json` authoritative | 先 `ensure_tx_layer` 再写——book.yaml 经 `tx::write_authoritative`（首次无 CAS），init_state → save_state 在 managed 下走 `write_authoritative_state`；建仓写同样入账，无绕过 ✓ |
 | `views::write_views`、`tracking::init_state` 占位卡 | `追踪/*`（除状态卡）derived | 派生视图，契约允许直接写 ✓ |
 | `review::save_review/write_report`、`cmd::cmd_batch_create` | `工作区/**` mutable | 非权威，直接写 ✓ |
 | `lingbi-storage` 各 repo | `.lingbi/transactions\|candidates\|approvals\|receipts` | 事务层自身（原子写）✓ |

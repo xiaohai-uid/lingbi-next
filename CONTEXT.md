@@ -34,7 +34,7 @@
 
 ## 验收与迁移
 
-- **Golden Path**：打开软件→创建书→写正文→自动保存→关闭→重开→正文还在→导出；不配 API Key、AI 全宕、工作流异常均不能阻止。
+- **Golden Path**：打开软件→建书→建章→写正文→保存→关闭→重开→正文还在（P5-1 门禁版：AI 生成随 P5-2 回挂、导出随 P5-4 回挂）；不配 API Key、AI 全宕、工作流异常均不能阻止。
 - **golden corpus**：`fixtures/storyrepo-oracle/<engine_sha>/`，Python 引擎的黑盒行为记录（22 步 + 不可变快照），Rust equivalence tests 的唯一基准；Windows 门禁零 Python/WSL 依赖。
 - **迁移器（migration）**：Inspector/Plan/Executor/Validator/Receipt 五件套；source 只读 + hash 不变 + 正文 byte-for-byte。
 - **生产级**：工程可靠性 + 安全基线（Tauri 官方能力模型）；签名/支付/法律为外部门禁，如实披露不阻塞本地验收。

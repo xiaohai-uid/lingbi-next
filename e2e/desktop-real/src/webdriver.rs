@@ -200,6 +200,36 @@ pub fn chapter_state(driver: &WebDriver, title: &str) -> Value {
         .unwrap_or_else(|error| panic!("chapter state json: {error}: {serialized}"))
 }
 
+/// Book V3 状态（P5-1）：追踪状态 + 指定章正文（open_chapter 命令）。
+/// `ch` 为 None 时取追踪状态第一章（若存在）。
+pub fn book_state(driver: &WebDriver, ch: Option<i64>) -> Value {
+    let script = r#"
+        const done = arguments[arguments.length - 1];
+        window.__TAURI_INTERNALS__.invoke('get_tracking_state').then((tracking) => {
+          const chapters = Object.keys(tracking.chapters || {}).map(Number).sort((a, b) => a - b);
+          const target = {targetCh} ?? chapters[0] ?? null;
+          if (target === null) return done(JSON.stringify({ state_revision: tracking.state_revision, chapters, content: null }));
+          return window.__TAURI_INTERNALS__.invoke('open_chapter', { ch: target }).then((chapter) => done(JSON.stringify({
+            state_revision: tracking.state_revision,
+            chapters,
+            ch: target,
+            title: chapter.title,
+            content: chapter.body,
+            content_hash: chapter.content_hash
+          }))).catch((error) => done('error:' + error));
+        }).catch((error) => done('error:' + error));
+        "#;
+    let target = match ch {
+        Some(n) => n.to_string(),
+        None => "null".to_owned(),
+    };
+    let script = script.replace("{targetCh}", &target);
+    let value = driver.execute_async(&script, vec![]);
+    let serialized = value.as_str().expect("book state string");
+    serde_json::from_str(serialized)
+        .unwrap_or_else(|error| panic!("book state json: {error}: {serialized}"))
+}
+
 /// Start a local SSE chat-completions server; returns its base URL.
 pub fn start_sse_server() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind sse");

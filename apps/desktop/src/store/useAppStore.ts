@@ -2,6 +2,8 @@ import { create } from "zustand";
 import {
   desktop,
   toCommandError,
+  type BookSession,
+  type Chapter,
   type Document,
   type ExportResult,
   type GeneratedCandidate,
@@ -10,6 +12,9 @@ import {
   type RecentProject,
   type Session,
 } from "../lib/desktop";
+
+/// Book V3 保存状态（P5-1：saved/saving/conflict 可见）。
+export type SaveState = "idle" | "saving" | "saved" | "conflict";
 
 interface AppStore {
   session: Session | null;
@@ -31,6 +36,19 @@ interface AppStore {
   recoveryDismissed: boolean;
   lastSavedContent: string;
   recoveryCandidate: GeneratedCandidate | null;
+  // Book V3（P5-1：项目/编辑/保存/重启）
+  book: BookSession | null;
+  bookChapters: Chapter[];
+  currentCh: number | null;
+  chapterContent: string;
+  chapterHash: string;
+  lastSavedChapterContent: string;
+  saveState: SaveState;
+  bookOpen: (root: string) => Promise<void>;
+  bookCreate: (root: string, name: string) => Promise<void>;
+  chapterCreate: (title: string) => Promise<void>;
+  chapterOpen: (ch: number) => Promise<void>;
+  chapterSave: () => Promise<void>;
   dismissRecovery: () => void;
   loadRecoveryCandidate: () => Promise<void>;
   createProject: (name: string, root?: string) => Promise<void>;
@@ -81,6 +99,161 @@ export const useAppStore = create<AppStore>((set, get) => ({
   recoveryDismissed: false,
   lastSavedContent: "",
   recoveryCandidate: null,
+  book: null,
+  bookChapters: [],
+  currentCh: null,
+  chapterContent: "",
+  chapterHash: "",
+  lastSavedChapterContent: "",
+  saveState: "idle",
+
+  // ---- Book V3（P5-1）----
+
+  async bookCreate(root, name) {
+    set({ status: "创建书仓...", error: null });
+    try {
+      const book = await desktop.createBook(root, name);
+      const meta = await desktop.listChapters();
+      const bookChapters: Chapter[] = meta.map((entry) => ({
+        ch: entry.ch,
+        title: entry.title,
+        frontmatter: { title: entry.title },
+        body: "",
+        content_hash: "",
+      }));
+      set({
+        session: null,
+        book,
+        bookChapters,
+        currentCh: null,
+        chapterContent: "",
+        chapterHash: "",
+        lastSavedChapterContent: "",
+        saveState: "idle",
+        selectedTab: "editor",
+        status: "书仓已创建",
+      });
+      void get().loadRecent();
+    } catch (error) {
+      setError(set, error);
+    }
+  },
+
+  async bookOpen(root) {
+    set({ status: "打开书仓...", error: null });
+    try {
+      const book = await desktop.openBook(root);
+      const meta = await desktop.listChapters();
+      const bookChapters: Chapter[] = meta.map((entry) => ({
+        ch: entry.ch,
+        title: entry.title,
+        frontmatter: { title: entry.title },
+        body: "",
+        content_hash: "",
+      }));
+      set({
+        session: null,
+        book,
+        bookChapters,
+        currentCh: null,
+        chapterContent: "",
+        chapterHash: "",
+        lastSavedChapterContent: "",
+        saveState: "idle",
+        selectedTab: "editor",
+        status:
+          book.recovered > 0 || book.recovery_failed > 0
+            ? `书仓已打开（恢复 ${book.recovered} 条，异常 ${book.recovery_failed} 条）`
+            : "书仓已打开",
+      });
+      void get().loadRecent();
+    } catch (error) {
+      setError(set, error);
+    }
+  },
+
+  async chapterCreate(title) {
+    if (!get().book) return;
+    // 防抖窗口内的未保存编辑先落盘（S2-4：建章不丢字）
+    const pending = get();
+    if (
+      pending.currentCh !== null &&
+      pending.chapterContent !== pending.lastSavedChapterContent
+    ) {
+      await get().chapterSave();
+    }
+    set({ status: "创建章节...", error: null });
+    try {
+      const chapter = await desktop.createChapter(title);
+      const bookChapters = [...get().bookChapters, chapter];
+      set({
+        bookChapters,
+        currentCh: chapter.ch,
+        chapterContent: chapter.body,
+        chapterHash: chapter.content_hash,
+        lastSavedChapterContent: chapter.body,
+        saveState: "saved",
+        status: "章节已创建",
+      });
+    } catch (error) {
+      setError(set, error);
+    }
+  },
+
+  async chapterOpen(ch) {
+    if (!get().book) return;
+    // 防抖窗口内的未保存编辑先落盘（S2-4：切章不丢字）
+    const pending = get();
+    if (
+      pending.currentCh !== null &&
+      pending.currentCh !== ch &&
+      pending.chapterContent !== pending.lastSavedChapterContent
+    ) {
+      await get().chapterSave();
+    }
+    set({ status: "打开章节...", error: null });
+    try {
+      const chapter = await desktop.openChapter(ch);
+      set({
+        currentCh: chapter.ch,
+        chapterContent: chapter.body,
+        chapterHash: chapter.content_hash,
+        lastSavedChapterContent: chapter.body,
+        saveState: "saved",
+        status: "章节已打开",
+      });
+    } catch (error) {
+      setError(set, error);
+    }
+  },
+
+  async chapterSave() {
+    const book = get().book;
+    const ch = get().currentCh;
+    if (!book || ch === null) return;
+    // 保存内容快照：保存期间用户继续输入的增量留给下一轮防抖
+    // （避免保存完成后 lastSaved 误标为最新内容导致静默丢字）。
+    const content = get().chapterContent;
+    const hash = get().chapterHash;
+    set({ saveState: "saving", error: null, status: "正在保存…" });
+    try {
+      const receipt = await desktop.saveChapter(ch, content, hash || undefined);
+      set({
+        saveState: "saved",
+        chapterHash: receipt.after_content_hash,
+        lastSavedChapterContent: content,
+        status: "已保存",
+      });
+    } catch (error) {
+      setError(set, error);
+      // 仅外部修改（CAS 冲突）置 conflict；其余失败保留错误面板
+      // 与「重试」指引，不引导重新打开章节（那会丢弃未保存内容）。
+      set({
+        saveState: get().errorCode === "DocumentConflict" ? "conflict" : "saved",
+        status: "保存失败",
+      });
+    }
+  },
 
   dismissRecovery() {
     set({ recoveryDismissed: true });
@@ -106,6 +279,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const content = await desktop.openDocument(session.current_document.id);
       const documents = await desktop.listDocuments();
       set({
+        book: null,
         session,
         documents,
         documentContent: content,
@@ -127,6 +301,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const content = await desktop.openDocument(session.current_document.id);
       const documents = await desktop.listDocuments();
       set({
+        book: null,
         session,
         documents,
         documentContent: content,

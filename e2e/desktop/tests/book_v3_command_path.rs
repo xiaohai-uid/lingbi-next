@@ -26,6 +26,29 @@ fn init_book(dir: &Path) {
 }
 
 #[test]
+fn book_v3_create_book_command_path() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let root = dir.path().join("新书").to_string_lossy().into_owned();
+    // 建书 → 建章 → 存章 → 重启（重开）→ 正文完整
+    let session = create_book(&root, "新书").expect("create_book");
+    assert!(session.managed);
+    assert_eq!(session.name, "新书");
+    assert_eq!(session.state_revision, 1);
+
+    let created = create_chapter(&root, "第一章").expect("create_chapter");
+    assert_eq!(created.ch, 1);
+    let opened = open_chapter(&root, 1).expect("open_chapter");
+    save_chapter(&root, 1, "新书第一章正文", Some(opened.content_hash)).expect("save");
+
+    // 重开（模拟重启）：内容完整、追踪修订不变
+    let reopened = open_book(&root).expect("reopen");
+    assert!(reopened.managed);
+    assert_eq!(reopened.state_revision, 1);
+    let after = open_chapter(&root, 1).expect("after reopen");
+    assert!(after.body.contains("新书第一章正文"));
+}
+
+#[test]
 fn book_v3_command_path_full_chain() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let root = dir.path().to_string_lossy().into_owned();
