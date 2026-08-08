@@ -1,12 +1,7 @@
-use chrono::Utc;
 use lingbi_contracts::{AppError, ErrorCode};
-use lingbi_domain::{Document, Project};
-use lingbi_storage::{AtomicFileStore, DiskAtomicFileStore};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::fs;
-use std::path::{Path, PathBuf};
-use uuid::Uuid;
+use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MigrationReport {
@@ -16,15 +11,6 @@ pub struct MigrationReport {
     pub resource_count: usize,
     pub old_paths: Vec<String>,
     pub warnings: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MigrationReceipt {
-    pub source: PathBuf,
-    pub destination: PathBuf,
-    pub documents_migrated: usize,
-    pub resources_migrated: usize,
-    pub content_hashes: Vec<(String, String)>,
 }
 
 struct V1Metadata {
@@ -61,92 +47,6 @@ pub fn inspect_v1(root: &Path) -> Result<MigrationReport, AppError> {
         resource_count: resource_paths.len(),
         old_paths: markdown_paths,
         warnings,
-    })
-}
-
-pub fn migrate_v1_to_v2(source: &Path, destination: &Path) -> Result<MigrationReceipt, AppError> {
-    if destination.exists() {
-        return Err(AppError::new(
-            ErrorCode::ProjectPathExists,
-            format!(
-                "migration destination already exists: {}",
-                destination.display()
-            ),
-            false,
-        ));
-    }
-
-    let report = inspect_v1(source)?;
-    fs::create_dir_all(destination.join(".lingbi")).map_err(io_error)?;
-    fs::create_dir_all(destination.join("chapters")).map_err(io_error)?;
-
-    let now = Utc::now();
-    let project = Project {
-        id: Uuid::new_v4(),
-        name: report.project_name.unwrap_or_else(|| {
-            source
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "project".to_owned())
-        }),
-        schema_version: 2,
-        created_at: now,
-        updated_at: now,
-    };
-    let store = DiskAtomicFileStore;
-    write_json(
-        &store,
-        &destination.join(".lingbi").join("project.json"),
-        &project,
-    )?;
-
-    let mut documents = Vec::new();
-    let mut resources_migrated = 0usize;
-    let mut content_hashes = Vec::new();
-    for old_path in report.old_paths.iter() {
-        let bytes = fs::read(source.join(old_path)).map_err(io_error)?;
-        let content_hash = hex_sha256(&bytes);
-        if is_chapter_path(old_path) {
-            let id = Uuid::new_v4();
-            let title = Path::new(old_path)
-                .file_stem()
-                .map(|stem| stem.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "未命名".to_owned());
-            let new_path = destination.join("chapters").join(format!("{id}.md"));
-            store.write_atomic(&new_path, &bytes, None)?;
-            documents.push(Document {
-                id,
-                project_id: project.id,
-                title,
-                order: documents.len() as i64,
-                revision: 0,
-                content_hash: content_hash.clone(),
-                created_at: now,
-                updated_at: now,
-            });
-        } else {
-            let resource_path = destination.join(old_path);
-            if let Some(parent) = resource_path.parent() {
-                fs::create_dir_all(parent).map_err(io_error)?;
-            }
-            store.write_atomic(&resource_path, &bytes, None)?;
-            resources_migrated += 1;
-        }
-        content_hashes.push((old_path.clone(), content_hash));
-    }
-
-    write_json(
-        &store,
-        &destination.join(".lingbi").join("documents.json"),
-        &documents,
-    )?;
-
-    Ok(MigrationReceipt {
-        source: source.to_path_buf(),
-        destination: destination.to_path_buf(),
-        documents_migrated: documents.len(),
-        resources_migrated,
-        content_hashes,
     })
 }
 
@@ -227,22 +127,6 @@ fn scan_markdown_recursive(
     Ok(())
 }
 
-fn write_json<T: serde::Serialize + ?Sized>(
-    store: &impl AtomicFileStore,
-    path: &Path,
-    value: &T,
-) -> Result<(), AppError> {
-    let bytes = serde_json::to_vec(value).map_err(|error| {
-        AppError::new(
-            ErrorCode::ProjectCorrupted,
-            format!("serialization failed: {error}"),
-            false,
-        )
-    })?;
-    store.write_atomic(path, &bytes, None)?;
-    Ok(())
-}
-
 fn io_error(error: std::io::Error) -> AppError {
     AppError::new(
         ErrorCode::ProjectCorrupted,
@@ -251,15 +135,9 @@ fn io_error(error: std::io::Error) -> AppError {
     )
 }
 
-fn hex_sha256(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lingbi_application::ProjectApplicationService;
     use std::fs;
     use tempfile::TempDir;
 
@@ -287,81 +165,7 @@ mod tests {
     }
 
     #[test]
-    fn normal_project_migrates_without_touching_source() {
-        let temp = source_with_metadata("novel", false);
-        let source = temp.path().join("novel");
-        let chapter = source.join("chapters/第一章.md");
-        fs::write(&chapter, "# 第一章\n\n原始正文").expect("chapter");
-        let destination = temp.path().join("v2");
-
-        let receipt = migrate_v1_to_v2(&source, &destination).expect("migrate");
-
-        assert_eq!(receipt.documents_migrated, 1);
-        assert_eq!(
-            fs::read_to_string(&chapter).expect("source"),
-            "# 第一章\n\n原始正文"
-        );
-        assert!(destination.join(".lingbi/project.json").exists());
-        assert!(
-            destination
-                .join("chapters")
-                .read_dir()
-                .expect("chapters")
-                .next()
-                .is_some()
-        );
-    }
-
-    #[tokio::test]
-    async fn migrated_project_opens_with_production_service() {
-        let temp = source_with_metadata("novel", false);
-        let source = temp.path().join("novel");
-        fs::write(source.join("chapters/第一章.md"), "# 第一章\n\n原始正文").expect("chapter");
-        let destination = temp.path().join("v2");
-        migrate_v1_to_v2(&source, &destination).expect("migrate");
-
-        let service = ProjectApplicationService::new();
-        let opened = service
-            .open_project(destination.clone())
-            .await
-            .expect("open");
-
-        assert_eq!(opened.project.schema_version, 2);
-        assert_eq!(opened.project.name, "旧版玄幻项目");
-        assert_eq!(opened.current_document.title, "第一章");
-        assert!(
-            destination
-                .join(opened.current_document.physical_path())
-                .exists()
-        );
-    }
-
-    #[test]
-    fn duplicate_titles_get_distinct_v2_paths() {
-        let temp = source_with_metadata("novel", false);
-        let source = temp.path().join("novel");
-        fs::write(source.join("chapters/第一章.md"), "A").expect("a");
-        fs::create_dir_all(source.join("project_meta")).expect("meta");
-        fs::write(source.join("project_meta/第一章.md"), "B").expect("b");
-        let destination = temp.path().join("v2");
-
-        let receipt = migrate_v1_to_v2(&source, &destination).expect("migrate");
-
-        let files: Vec<_> = fs::read_dir(destination.join("chapters"))
-            .expect("chapters")
-            .map(|entry| entry.expect("entry").path())
-            .collect();
-        assert_eq!(receipt.documents_migrated, 1);
-        assert_eq!(receipt.resources_migrated, 1);
-        assert_eq!(files.len(), 1);
-        assert_eq!(
-            fs::read_to_string(destination.join("project_meta/第一章.md")).expect("resource"),
-            "B"
-        );
-    }
-
-    #[test]
-    fn real_v1_layout_migrates_only_chapter_directories_as_documents() {
+    fn inspect_reports_chapter_and_resource_counts() {
         let temp = source_with_metadata("novel", false);
         let source = temp.path().join("novel");
         fs::create_dir_all(source.join("章节内容")).expect("章节内容");
@@ -372,39 +176,35 @@ mod tests {
         fs::write(source.join("小说资料/人物库.md"), "人物资料").expect("人物库");
         fs::create_dir_all(source.join("project_meta")).expect("project_meta");
         fs::write(source.join("project_meta/notes.md"), "项目笔记").expect("notes");
-        let destination = temp.path().join("v2");
 
         let report = inspect_v1(&source).expect("inspect");
         assert_eq!(report.document_count, 2);
         assert_eq!(report.resource_count, 3);
-
-        let receipt = migrate_v1_to_v2(&source, &destination).expect("migrate");
-        assert_eq!(receipt.documents_migrated, 2);
-        assert_eq!(receipt.resources_migrated, 3);
-
-        let bytes = fs::read(destination.join(".lingbi/documents.json")).expect("documents");
-        let documents: Vec<Document> = serde_json::from_slice(&bytes).expect("documents json");
-        assert_eq!(documents.len(), 2);
-        assert!(documents.iter().all(|document| document.order < 2));
-
-        for resource in [
-            "小说资料/世界观.md",
-            "小说资料/人物库.md",
-            "project_meta/notes.md",
-        ] {
-            assert_eq!(
-                fs::read(destination.join(resource)).expect("resource"),
-                fs::read(source.join(resource)).expect("source resource")
-            );
-        }
-        assert_eq!(
-            fs::read(source.join("章节内容/第一章.md")).expect("source chapter"),
-            fs::read(destination.join(documents[0].physical_path())).expect("dest chapter")
+        assert_eq!(report.project_name.as_deref(), Some("旧版玄幻项目"));
+        assert!(
+            report
+                .old_paths
+                .iter()
+                .any(|p| p.replace('\\', "/") == "章节内容/第一章.md")
         );
     }
 
     #[test]
-    fn missing_metadata_migrates_with_warning() {
+    fn inspect_detects_duplicate_title_as_chapter_and_resource() {
+        // 同名文件跨目录：章节目录内为 chapter，其余为 resource
+        let temp = source_with_metadata("novel", false);
+        let source = temp.path().join("novel");
+        fs::write(source.join("chapters/第一章.md"), "A").expect("a");
+        fs::create_dir_all(source.join("project_meta")).expect("meta");
+        fs::write(source.join("project_meta/第一章.md"), "B").expect("b");
+
+        let report = inspect_v1(&source).expect("inspect");
+        assert_eq!(report.document_count, 1);
+        assert_eq!(report.resource_count, 1);
+    }
+
+    #[test]
+    fn inspect_missing_metadata_reports_warning() {
         let temp = TempDir::new().expect("temp dir");
         let source = temp.path().join("missing");
         fs::create_dir_all(source.join("chapters")).expect("chapters");
@@ -412,10 +212,6 @@ mod tests {
 
         let report = inspect_v1(&source).expect("inspect");
         assert!(report.warnings.iter().any(|w| w.contains("missing")));
-
-        let destination = temp.path().join("v2");
-        let receipt = migrate_v1_to_v2(&source, &destination).expect("migrate");
-        assert_eq!(receipt.documents_migrated, 1);
     }
 
     #[test]

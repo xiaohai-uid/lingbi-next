@@ -42,15 +42,26 @@ impl MigrationExecutor {
     }
 
     fn execute_flutter_v1(plan: &MigrationPlan) -> Result<(), AppError> {
-        // 目标树骨架（book.yaml + 追踪 由引擎语义生成）
-        let book_yaml = plan.destination.join("book.yaml");
-        if let Some(parent) = book_yaml.parent() {
-            std::fs::create_dir_all(parent)
+        // 目标树骨架：契约 required_dirs（大纲/定稿/文风/工作区/追踪）
+        for dir in ["大纲", "定稿", "文风", "工作区", "追踪"] {
+            std::fs::create_dir_all(plan.destination.join(dir))
                 .map_err(|e| app_error(ErrorCode::DiskWriteFailed, format!("创建目录失败: {e}")))?;
         }
+        // book.yaml + 追踪 由引擎语义生成（total_chapters = 实际章节数，
+        // doctor 要求 ≥1）
+        let chapter_count = plan
+            .steps
+            .iter()
+            .filter(|step| step.kind == FileKind::Chapter)
+            .count();
+        let book_yaml = plan.destination.join("book.yaml");
         std::fs::write(
             &book_yaml,
-            format!("---\nid: {}\nname: {}\nstatus: writing\ntotal_chapters: 0\n---\n", Uuid::new_v4(), plan.book_name),
+            format!(
+                "---\nid: {}\nname: {}\nstatus: writing\ntotal_chapters: {chapter_count}\n---\n",
+                Uuid::new_v4(),
+                plan.book_name
+            ),
         )
         .map_err(|e| app_error(ErrorCode::DiskWriteFailed, format!("写 book.yaml 失败: {e}")))?;
         lingbi_book::tracking::init_state(&plan.destination)?;

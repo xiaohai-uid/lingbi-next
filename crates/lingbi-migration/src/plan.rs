@@ -96,7 +96,8 @@ impl MigrationPlan {
             .unwrap_or("迁移书仓")
             .to_owned();
         let mut steps = Vec::new();
-        let mut titles = std::collections::HashMap::<String, i64>::new();
+        let mut titles = std::collections::HashSet::new();
+        let mut next_ch: i64 = 1;
         for file in &report.files {
             match file.kind {
                 FileKind::Chapter => {
@@ -110,15 +111,14 @@ impl MigrationPlan {
                             format!("章标题含非法字符（拒绝迁移，请改名后重试）: {stem}"),
                         ));
                     }
-                    let ch = titles.entry(stem.clone()).or_insert_with(|| 1);
-                    if *ch > 1 {
+                    if !titles.insert(stem.clone()) {
                         return Err(app_error(
                             ErrorCode::ProjectCorrupted,
                             format!("章标题重复（拒绝迁移，请改名后重试）: {stem}"),
                         ));
                     }
-                    let dest = format!("定稿/正文/{ch:03}-{stem}.md");
-                    *ch += 1;
+                    let dest = format!("定稿/正文/{next_ch:03}-{stem}.md");
+                    next_ch += 1;
                     steps.push(PlanStep {
                         source: file.rel_path.clone(),
                         destination: dest,

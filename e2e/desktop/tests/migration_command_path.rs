@@ -84,3 +84,49 @@ fn migrate_book_destination_conflict_rejected() {
         .expect_err("must fail");
     assert_eq!(err.code, "ProjectPathExists");
 }
+
+#[test]
+fn migrate_book_command_path_flutter_v1() {
+    // V1 项目（chapters/ + project.json）→ 章节进 定稿/正文 + frontmatter 补全
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let source = temp.path().join("v1src");
+    std::fs::create_dir_all(source.join(".lingbi")).expect("meta");
+    std::fs::create_dir_all(source.join("chapters")).expect("chapters");
+    std::fs::create_dir_all(source.join("project_meta")).expect("meta2");
+    std::fs::write(
+        source.join(".lingbi/project.json"),
+        r#"{"schemaVersion":1,"name":"旧版项目"}"#,
+    )
+    .expect("metadata");
+    std::fs::write(source.join("chapters/第一章.md"), "# 第一章\n\n正文").expect("chapter");
+    std::fs::write(source.join("project_meta/设定.md"), "设定资料").expect("resource");
+    let destination = temp.path().join("v3");
+
+    let receipt = migrate_book(&source.to_string_lossy(), &destination.to_string_lossy())
+        .expect("migrate_book");
+
+    assert_eq!(receipt.classification, "flutter-v1");
+    assert!(
+        receipt.migration_rule.iter().any(|r| r.rule == "frontmatter-补全"),
+        "rules: {:?}",
+        receipt.migration_rule
+    );
+    assert!(
+        receipt.migration_rule.iter().any(|r| r.rule == "resource-archived"),
+        "rules: {:?}",
+        receipt.migration_rule
+    );
+
+    // 章节落盘 + 正文段保留
+    let ch = std::fs::read_to_string(destination.join("定稿/正文/001-第一章.md")).expect("ch");
+    assert!(ch.contains("---"), "frontmatter");
+    assert!(ch.contains("# 第一章\n\n正文"), "body kept");
+    assert!(
+        destination.join("工作区/迁移存档/project_meta/设定.md").exists(),
+        "resource archived"
+    );
+
+    // 迁移后 open_book 托管 + doctor 通过（validator 已内嵌）
+    let opened = open_book(&destination.to_string_lossy()).expect("open");
+    assert_eq!(opened.managed, true, "managed");
+}

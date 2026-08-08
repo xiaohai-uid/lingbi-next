@@ -31,8 +31,10 @@ pub fn migrate_book(source: &Path, destination: &Path) -> Result<MigrationReceip
     let report = MigrationInspector::inspect(source)?;
     let plan = MigrationPlan::plan(&report, destination)?;
     MigrationExecutor::execute(&plan)?;
-    MigrationValidator::validate(source, destination, report.classification)?;
-    MigrationReceipt::build(&plan)
+    let doctor_warnings = MigrationValidator::validate(source, destination, report.classification)?;
+    let mut receipt = MigrationReceipt::build(&plan)?;
+    receipt.warnings.extend(doctor_warnings);
+    Ok(receipt)
 }
 
 fn app_error(code: ErrorCode, message: impl Into<String>) -> AppError {
