@@ -31,10 +31,11 @@
 
 ## Golden Corpus（P0 关键交付物）
 
-- 位置：`fixtures/storyrepo-oracle/153eb63/`（22 步 × (stdout + exitcode + 整仓快照) + MANIFEST.json + 初始书仓）
+- 位置：`fixtures/storyrepo-oracle/153eb63/`（`steps/000-initial/book` 初始不可变快照 + 22 步 × (stdout + exitcode + 整仓快照) + MANIFEST.json）
 - 生成器：`scripts/gen-storyrepo-oracle.py`（黑盒：`python -m storyrepo.cli` 子进程 + cwd=书仓根 + PYTHONPATH=冻结引擎）
 - 覆盖命令：doctor(prewrite/precommit/postcommit) / contract / context / brief / review / commit / check / status / stats / resume / revision / learn / batch create / report
 - **22 步全部 exit=0**；覆盖副作用：追踪状态合并（imported_through_chapter=2, state_revision=3）、派生视图重建（上下文/伏笔/作者真相/时间线/角色状态/读者已知/逐章记录）、评审报告落盘、金句收割、批次计划
+- **字节锁定**：生成时统一 LF（引擎 Windows CRLF 副作用归一化），仓库既有 `fixtures/** text eol=lf` 规则保证任何平台检出一致；**全新克隆验证 0 mismatches**
 - Rust Book Core equivalence tests 只读此 corpus；正式 Windows 门禁零 Python/WSL 依赖
 - corpus 快照含时间戳文件名（`工作区/批次-<ts>.json`），消费方按 glob 定位
 
