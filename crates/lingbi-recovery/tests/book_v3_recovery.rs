@@ -226,6 +226,19 @@ fn unparseable_journal_recorded_and_kept() {
 }
 
 #[test]
+fn target_io_error_recorded_and_journal_kept() {
+    // 目标不是文件（目录占位）→ 真实 IO 错误：记 errors、跳过、日志保留，不臆断外部修改
+    let (_t, root) = managed_root();
+    let dir = root.join(STATE_REL);
+    std::fs::create_dir_all(&dir).expect("create dir at target path");
+    journal(&root, TransactionPhase::ContentWritten, "旧内容", "新内容");
+
+    let report = recover_book_v3(&root).expect("recover");
+    assert_eq!(report.errors.len(), 1, "{report:?}");
+    assert_eq!(tx_files(&root).len(), 1, "无法判定的事务保留日志,下轮再试");
+}
+
+#[test]
 fn recovery_is_idempotent() {
     let (_t, root) = managed_root();
     write_state(&root, "旧内容");
