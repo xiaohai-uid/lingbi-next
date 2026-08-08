@@ -149,7 +149,7 @@ fn merge_unknown_ids_warn_like_engine() {
 fn merge_summary_truncates_by_codepoint_not_bytes() {
     // 引擎 summary[:80] 码点截断；Rust truncate 按字节会在多字节字符边界 panic——字符级截断
     let mut s = new_state(Path::new("书"));
-    let mut fm = std::collections::HashMap::new();
+    let fm = std::collections::HashMap::new();
     // 30 个汉字 = 90 字节 > 80 字节，字符数 30 < 80 码点
     let long_summary = "长".repeat(30);
     merge_chapter_facts(&mut s, 1, &fm, &long_summary).unwrap();
@@ -168,7 +168,7 @@ fn merge_non_numeric_chapter_key_fail_closed() {
         title: "x".to_owned(),
         words: "1".to_owned(),
     });
-    let mut fm = std::collections::HashMap::new();
+    let fm = std::collections::HashMap::new();
     let err = merge_chapter_facts(&mut s, 2, &fm, "").unwrap_err();
     assert_eq!(err.code, lingbi_contracts::ErrorCode::BookCorrupted);
 }
