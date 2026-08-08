@@ -13,6 +13,7 @@ members = [
   "crates/lingbi-recovery",
   "crates/lingbi-import-export",
   "crates/lingbi-security",
+  "crates/lingbi-book",
   "crates/lingbi-ffi",
   "e2e/desktop",
   "e2e/desktop-real",

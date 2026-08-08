@@ -1108,6 +1108,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lingbi-book"
+version = "0.1.0"
+dependencies = [
+ "lingbi-contracts",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "lingbi-contracts"
 version = "0.1.0"
 dependencies = [
