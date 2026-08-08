@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+chrono = "0.4"
+glob = "0.3"
 indexmap = { version = "2", features = ["serde"] }
 lingbi-contracts = { path = "../lingbi-contracts" }
 regex = "1.13.1"

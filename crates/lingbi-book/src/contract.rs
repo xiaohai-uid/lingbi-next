@@ -60,7 +60,7 @@ impl Contract {
         render_json(&self.to_frag())
     }
 
-    fn to_frag(&self) -> Frag {
+    pub(crate) fn to_frag(&self) -> Frag {
         obj(vec![
             ("goal".to_owned(), Frag::Str(self.goal.clone())),
             (
