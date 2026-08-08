@@ -88,5 +88,6 @@
 - [x] 分片 3（#34 设定/上下文/评审）：真实 Windows E2E 绿——工具面板（大纲/合同/任务书/机检/诊断）
 - [x] 分片 4（#35 导入导出/恢复）：真实 Windows E2E 绿——导出 DOCX/MD/TXT 落盘 + crash journal 注入 → 重开恢复报告「恢复 1 条」+ 正文完好；legacy 首次写入托管化经事务门
 - [x] 分片 5（#36 Skills/高级）：真实 Windows E2E 绿——高级设置 0.3/512 保存 → 重启回显预填 + provider_status 读回一致（keyring 持久化）；技能面板声明式只读卡展示 + P9 占位；能力审查证据（capability 仅 core:default、零 tauri 插件、命令层无进程调用）
+- [x] P6（#23 V1→V3 一次迁移）：五件套迁移器（lingbi-migration crate + migrate_book 命令，无 UI）——storyrepo-legacy（字节原样 + 托管化 + 回执六字段）与 flutter-v1（章节转 定稿/正文 + frontmatter 补全 + 资源归档）两分类；**真实《零界道种》4 章迁移验收**：doctor exit 0 + 正文 byte-for-byte（4 章全 IDENTICAL）+ source READ ONLY（source_hash 前后一致）+ 回执落盘；契约校验器对真实书仓附加文件（README/skills/scripts 等未知类别）如实拒绝——无损优先，P12 完整产品级验收统一处理
 - [ ] 每个纵向分片真实 Windows E2E 验收（P5-1 起逐片）
 - [x] PARTIAL/BLOCKED 能力如实标注不搬回（#19 RAG DROP、#29 市场情报 BLOCKED_EXTERNAL、#28 terminal DISABLED、#31 WebDAV PARTIAL/遥测 DROP）

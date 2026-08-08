@@ -168,7 +168,10 @@ fn collect_rel(root: &Path, current: &Path, out: &mut Vec<String>) -> Result<(),
     for entry in entries {
         let path = entry.path();
         if path.is_dir() {
-            if path.file_name().and_then(|n| n.to_str()) == Some(".lingbi") {
+            if matches!(
+                path.file_name().and_then(|n| n.to_str()),
+                Some(".lingbi") | Some(".git")
+            ) {
                 continue;
             }
             collect_rel(root, &path, out)?;

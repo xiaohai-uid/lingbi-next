@@ -71,7 +71,12 @@ fn collect_hashes(
     for entry in entries {
         let path = entry.path();
         if path.is_dir() {
-            if exclude_lingbi && path.file_name().and_then(|n| n.to_str()) == Some(".lingbi") {
+            if exclude_lingbi
+                && matches!(
+                    path.file_name().and_then(|n| n.to_str()),
+                    Some(".lingbi") | Some(".git")
+                )
+            {
                 continue;
             }
             collect_hashes(root, &path, exclude_lingbi, out)?;

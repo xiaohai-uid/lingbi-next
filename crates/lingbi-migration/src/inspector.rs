@@ -167,8 +167,9 @@ fn collect_tree(
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
         if path.is_dir() {
-            if name == ".lingbi" {
-                warnings.push(format!("跳过应用元数据目录: {name}"));
+            // 应用元数据（.lingbi）与 VCS 元数据（.git）都不属于书仓内容
+            if name == ".lingbi" || name == ".git" {
+                warnings.push(format!("跳过元数据目录: {name}"));
                 continue;
             }
             collect_tree(root, &path, files, warnings)?;
