@@ -14,6 +14,9 @@
 //!   `BookCorrupted`（fail-closed，语义一致）。
 //! - 读-改-写循环中的既有文件读取失败（金句库条目/反例库头部）按缺失处理——
 //!   引擎 open 会崩溃；等价范围内不可达（文件刚被列出/写入）。
+//! - P3 #20 扩展：托管书仓（`.lingbi/` 存在）的两处权威追加（金句库/反例库）经事务门
+//!   `crate::tx::write_authoritative`（期望哈希 CAS + 日志 + 回执）；引擎无此概念，
+//!   legacy 书仓保持引擎 fs::write 原路径（回放门禁字节锁定）。
 
 use crate::checks::redlines;
 use crate::py_num::py_round1;
@@ -141,9 +144,16 @@ pub fn harvest_quotes(root: &Path, ch: i64) -> Result<usize, AppError> {
     }
     out.push_str(&new.join("\n"));
     out.push('\n');
-    std::fs::write(&target, out).map_err(|e| {
-        AppError::new(ErrorCode::DiskWriteFailed, format!("写金句库失败: {e}"), false)
-    })?;
+    if crate::tx::is_managed(root) {
+        // P3 #20：权威追加走事务门（期望哈希 CAS 检测外部修改）
+        let expected = file_hash_if_exists(&target)?;
+        let rel = format!("{}/{}/{:03}.md", QUOTE_DIR.0, QUOTE_DIR.1, ch);
+        crate::tx::write_authoritative(root, &rel, out.as_bytes(), expected.as_deref(), None)?;
+    } else {
+        std::fs::write(&target, out).map_err(|e| {
+            AppError::new(ErrorCode::DiskWriteFailed, format!("写金句库失败: {e}"), false)
+        })?;
+    }
     Ok(new.len())
 }
 
@@ -206,10 +216,32 @@ pub fn absorb_review(root: &Path, ch: i64) -> Result<usize, AppError> {
     out.push_str("\n\n");
     out.push_str(&entries.join("\n"));
     out.push('\n');
-    std::fs::write(&p, out).map_err(|e| {
-        AppError::new(ErrorCode::DiskWriteFailed, format!("写反例库失败: {e}"), false)
-    })?;
+    if crate::tx::is_managed(root) {
+        // P3 #20：权威追加走事务门（期望哈希 CAS 检测外部修改）
+        let expected = file_hash_if_exists(&p)?;
+        let rel = format!("{}/{}", COUNTEREXAMPLES_FILE.0, COUNTEREXAMPLES_FILE.1);
+        crate::tx::write_authoritative(root, &rel, out.as_bytes(), expected.as_deref(), None)?;
+    } else {
+        std::fs::write(&p, out).map_err(|e| {
+            AppError::new(ErrorCode::DiskWriteFailed, format!("写反例库失败: {e}"), false)
+        })?;
+    }
     Ok(new.len())
+}
+
+/// 文件当前内容哈希（不存在 → None）——权威追加的 CAS 期望值。
+fn file_hash_if_exists(path: &std::path::Path) -> Result<Option<String>, AppError> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let bytes = std::fs::read(path).map_err(|e| {
+        AppError::new(
+            ErrorCode::DiskWriteFailed,
+            format!("读权威文件失败: {e}"),
+            false,
+        )
+    })?;
+    Ok(Some(lingbi_storage::sha256_hex(&bytes)))
 }
 
 /// 每章文风统计（引擎 `style_stats`）。

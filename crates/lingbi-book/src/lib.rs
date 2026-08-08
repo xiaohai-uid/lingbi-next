@@ -21,6 +21,7 @@ pub mod review;
 pub mod revision;
 pub mod state;
 pub mod tracking;
+pub mod tx;
 pub mod views;
 
 mod json_engine;

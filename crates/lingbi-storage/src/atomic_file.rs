@@ -37,7 +37,7 @@ impl AtomicFileStore for DiskAtomicFileStore {
         bytes: &[u8],
         expected_hash: Option<&str>,
     ) -> Result<String, AppError> {
-        let content_hash = hex_sha256(bytes);
+        let content_hash = sha256_hex(bytes);
         if let Some(expected) = expected_hash {
             if !path.exists() {
                 return Err(AppError::new(
@@ -53,7 +53,7 @@ impl AtomicFileStore for DiskAtomicFileStore {
                     false,
                 )
             })?;
-            let current_hash = hex_sha256(&current);
+            let current_hash = sha256_hex(&current);
             if !expected.eq_ignore_ascii_case(&current_hash) {
                 return Err(AppError::new(
                     ErrorCode::DocumentConflict,
@@ -109,7 +109,7 @@ impl AtomicFileStore for DiskAtomicFileStore {
                 false,
             )
         })?;
-        if hex_sha256(&verified) != content_hash {
+        if sha256_hex(&verified) != content_hash {
             let _ = fs::remove_file(path);
             return Err(AppError::new(
                 ErrorCode::ProjectCorrupted,
@@ -134,7 +134,8 @@ fn temp_path_for(path: &Path) -> PathBuf {
     path.with_file_name(format!("{file_name}.tmp-{}-{nanos}", std::process::id()))
 }
 
-fn hex_sha256(bytes: &[u8]) -> String {
+/// 内容 SHA-256 十六进制（小写）——全部哈希比较（CAS/回执/恢复）共用同一实现。
+pub fn sha256_hex(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -193,13 +194,13 @@ mod tests {
         store
             .write_atomic(&path, b"original", None)
             .expect("write original");
-        let original_hash = hex_sha256(b"original");
+        let original_hash = sha256_hex(b"original");
 
         let replacement_hash = store
             .write_atomic(&path, b"replacement", Some(&original_hash))
             .expect("write replacement");
 
-        assert_eq!(replacement_hash, hex_sha256(b"replacement"));
+        assert_eq!(replacement_hash, sha256_hex(b"replacement"));
         assert_eq!(store.read(&path).expect("read"), b"replacement");
     }
 
@@ -212,7 +213,7 @@ mod tests {
             .write_atomic(&path, b"original", None)
             .expect("write original");
         fs::write(&path, b"external").expect("external edit");
-        let original_hash = hex_sha256(b"original");
+        let original_hash = sha256_hex(b"original");
 
         let result = store.write_atomic(&path, b"replacement", Some(&original_hash));
 

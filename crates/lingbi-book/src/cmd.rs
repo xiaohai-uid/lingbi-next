@@ -169,6 +169,18 @@ pub fn cmd_commit(root: &Path, ch: i64, force: bool) -> Result<CmdOut, AppError>
     bump_revision(&mut s);
     save_state(root, &s)?;
     write_views(root, &s)?;
+    // P3 #20：托管书仓在结算时快照 Final Revision（尽力而为，失败不阻断结算）
+    if crate::tx::is_managed(root) {
+        match std::fs::read(root.join(BODY_DIR).join(&fs[0])) {
+            Ok(body) => {
+                if let Err(e) = crate::tx::write_version_snapshot(root, ch, s.state_revision, &body)
+                {
+                    out.push_str(&format!("  ⚠ Final Revision 快照失败: {e}\n"));
+                }
+            }
+            Err(e) => out.push_str(&format!("  ⚠ 正文快照读取失败: {e}\n")),
+        }
+    }
     out.push_str(&format!(
         "✅ commit ch{ch} (rev {}),派生视图已重建\n",
         s.state_revision

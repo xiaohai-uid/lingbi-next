@@ -9,7 +9,8 @@
 //!
 //! 与引擎的差异（有意，fail-closed 纪律）：
 //! - 引擎 `load_state` 对类型错误字段**重置为默认**；本实现返回 `BookCorrupted`（fail-closed）。
-//! - 引擎 `save_state` 用 tmp+rename 原子写；本实现同（事务层在 P3 接入）。
+//! - 引擎 `save_state` 用 tmp+rename 原子写；本实现 legacy 书仓同；托管书仓
+//!   （`.lingbi/` 存在）经事务门（P3 #20，见 `crate::tx`）——引擎无此概念，属扩展。`
 
 use crate::json_engine::{obj, opt_int, render as render_json, Frag};
 use crate::state::{fm_list, TRACKING_DIR};
@@ -159,7 +160,13 @@ pub fn load_state(root: &Path) -> Result<TrackingState, AppError> {
 }
 
 /// 引擎 `save_state`：原子写（tmp + rename），JSON 输出与引擎 dump 逐字节一致。
+/// P3 #20：托管书仓（`.lingbi/` 存在）经事务门（修订守卫 + CAS + 日志 + 回执）；
+/// legacy 书仓保持引擎原路径（回放门禁字节锁定）。
 pub fn save_state(root: &Path, s: &TrackingState) -> Result<(), AppError> {
+    if crate::tx::is_managed(root) {
+        crate::tx::write_authoritative_state(root, s)?;
+        return Ok(());
+    }
     let dir = root.join(TRACKING_DIR);
     std::fs::create_dir_all(&dir).map_err(|e| {
         AppError::new(
