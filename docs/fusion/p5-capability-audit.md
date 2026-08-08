@@ -91,3 +91,4 @@
 - [x] P6（#23 V1→V3 一次迁移）：五件套迁移器（lingbi-migration crate + migrate_book 命令，无 UI）——storyrepo-legacy（字节原样 + 托管化 + 回执六字段）与 flutter-v1（章节转 定稿/正文 + frontmatter 补全 + 资源归档）两分类；**真实《零界道种》4 章迁移验收**：doctor exit 0 + 正文 byte-for-byte（4 章全 IDENTICAL）+ source READ ONLY（source_hash 前后一致）+ 回执落盘；契约校验器对真实书仓附加文件（README/skills/scripts 等未知类别）如实拒绝——无损优先，P12 完整产品级验收统一处理
 - [ ] 每个纵向分片真实 Windows E2E 验收（P5-1 起逐片）
 - [x] PARTIAL/BLOCKED 能力如实标注不搬回（#19 RAG DROP、#29 市场情报 BLOCKED_EXTERNAL、#28 terminal DISABLED、#31 WebDAV PARTIAL/遥测 DROP）
+- [x] P7 章事务引擎（#24，能力 8/13/23）：8 节点链引擎（lingbi-workflow，#40）+ 命令层 run_chain（#41）+ 真实《零界道种》全链验收（#42，WSL 副本 ch4：8 节点 Completed、定稿落盘字节断言、追踪 rev 7→8 结算、checkpoint/handoff/评审报告落盘、doctor exit 0、改大纲重跑失效 + 定稿棘轮拒绝证据；源书仓 untouched；AI 节点注入 provider 如实记录）——规格 `docs/fusion/spec-chapter-transaction-v3.md`；链重跑语义：输入未变复用（checkpoint 可续）、上游变化 invalidate（能力 23）、provider/model 快照入 input_hash（能力 8）
