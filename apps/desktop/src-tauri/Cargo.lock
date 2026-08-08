@@ -1887,6 +1887,7 @@ dependencies = [
 name = "lingbi-commands"
 version = "0.1.0"
 dependencies = [
+ "lingbi-ai",
  "lingbi-application",
  "lingbi-book",
  "lingbi-contracts",
@@ -1894,6 +1895,7 @@ dependencies = [
  "lingbi-migration",
  "lingbi-recovery",
  "lingbi-storage",
+ "lingbi-workflow",
  "serde",
  "serde_json",
  "uuid",
@@ -2018,6 +2020,22 @@ dependencies = [
  "chrono",
  "lingbi-contracts",
  "lingbi-domain",
+ "serde",
+ "serde_json",
+ "sha2",
+ "uuid",
+]
+
+[[package]]
+name = "lingbi-workflow"
+version = "0.1.0"
+dependencies = [
+ "async-stream",
+ "futures",
+ "lingbi-ai",
+ "lingbi-book",
+ "lingbi-contracts",
+ "lingbi-storage",
  "serde",
  "serde_json",
  "sha2",

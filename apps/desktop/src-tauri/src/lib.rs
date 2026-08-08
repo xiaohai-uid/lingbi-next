@@ -939,7 +939,7 @@ pub fn run() {
             book_cmds::create_candidate,
             book_cmds::adopt_candidate,
             book_cmds::reject_candidate,
-            book_cmds::run_workflow,
+            book_cmds::run_chain,
             book_cmds::resume_workflow,
             book_cmds::cancel_workflow,
             book_cmds::get_run_ledger,

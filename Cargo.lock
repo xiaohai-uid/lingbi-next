@@ -1136,6 +1136,7 @@ dependencies = [
 name = "lingbi-commands"
 version = "0.1.0"
 dependencies = [
+ "lingbi-ai",
  "lingbi-application",
  "lingbi-book",
  "lingbi-contracts",
@@ -1143,9 +1144,11 @@ dependencies = [
  "lingbi-migration",
  "lingbi-recovery",
  "lingbi-storage",
+ "lingbi-workflow",
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
  "uuid",
 ]
 
@@ -1183,6 +1186,7 @@ dependencies = [
  "lingbi-mutation",
  "lingbi-recovery",
  "lingbi-storage",
+ "lingbi-workflow",
  "reqwest",
  "serde_json",
  "sha2",
@@ -1322,6 +1326,7 @@ dependencies = [
  "lingbi-book",
  "lingbi-contracts",
  "lingbi-storage",
+ "lingbi-workflow",
  "serde",
  "serde_json",
  "sha2",

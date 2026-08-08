@@ -20,6 +20,8 @@ pub mod chain;
 pub mod checkpoint;
 pub mod hash;
 pub mod node;
+#[cfg(feature = "test-support")]
+pub mod testing;
 
 use crate::chain::{exec_brief, exec_contract, NodeArtifact};
 use crate::checkpoint::ChapterCheckpoint;

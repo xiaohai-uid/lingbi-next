@@ -8,8 +8,12 @@
 //! create_chapter / list_chapters / open_chapter / save_chapter —— 章正文
 //! build_contract / build_brief / run_check            —— 写作辅助
 //! create_candidate / adopt_candidate / reject_candidate —— 候选稿
-//! run_workflow / resume_workflow / cancel_workflow / get_run_ledger —— 工作流
+//! run_chain / resume_workflow / cancel_workflow / get_run_ledger —— 工作流
 //! ```
+//!
+//! `run_chain`（P7 #24）= 8 节点章事务链（lingbi-workflow），异步收
+//! `Arc<dyn AiProvider>`；`resume/cancel_workflow/get_run_ledger` 保持 P4
+//! 语义，Run 持久化/幂等/账本收口属 P8（#25）。
 //!
 //! 纪律（与引擎/既有 crate 的差异，fail-closed 声明）：
 //! - 本 crate 是薄包装：领域逻辑全部复用 `lingbi-book` / `lingbi-recovery`，
@@ -21,9 +25,9 @@
 //! - 候选稿生命周期为 P4 最小版（`工作区/草稿/` mutable 文件，不经事务
 //!   门）；P7 章事务引擎（#24）以 `.lingbi/candidates` 状态机接管，本模块
 //!   不提前实现 P7 语义。
-//! - run/resume/cancel_workflow 在 P4 为同步确定性链（无后台运行）；Run
-//!   持久化/幂等/账本收口属 P8（#25），本模块诚实返回同步语义，cancel 为
-//!   空操作并说明原因。
+//! - run_chain（P7）为异步 8 节点链，AI 节点经注入的 `AiProvider` 执行；
+//!   resume/cancel_workflow 保持 P4 同步语义，Run 持久化/幂等/账本收口属
+//!   P8（#25），cancel 为空操作并说明原因。
 //! - 建章 frontmatter 模板为应用语义（引擎无「建章」命令，正文由外部写
 //!   入）；字段名与引擎解析器一致，commit 时 `merge_chapter_facts` 照常
 //!   消化，不触碰引擎既有字节路径。
@@ -168,14 +172,57 @@ pub struct AdoptResultDto {
     pub stdout: String,
 }
 
+/// P7 章事务链运行结果（8 节点 DTO；对应 lingbi-workflow::ChainReport）。
 #[derive(Debug, Clone, Serialize)]
-pub struct RunResultDto {
-    pub run_id: String,
+pub struct ChainRunDto {
     pub ch: i64,
-    pub contract_json: String,
-    pub brief: String,
+    /// Completed / Halted（机检门禁不过）/ Failed（节点失败）。
+    pub status: String,
+    pub book_input_hash: String,
+    pub nodes: Vec<ChainNodeDto>,
     pub checks: Vec<CheckResultDto>,
-    pub checks_passed: bool,
+    pub draft_path: Option<String>,
+    pub review_path: Option<String>,
+    pub handoff: Option<HandoffDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ChainNodeDto {
+    pub node_id: String,
+    pub definition_id: String,
+    pub definition_version: u32,
+    pub input_hash: String,
+    pub output_hash: String,
+    pub status: String,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub usage: Option<UsageDto>,
+    pub error: Option<String>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UsageDto {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+}
+
+/// 交付报告（handoff 节点产物摘要）。
+#[derive(Debug, Clone, Serialize)]
+pub struct HandoffDto {
+    pub ch: i64,
+    pub chapter_path: String,
+    pub title: String,
+    pub words: usize,
+    pub nodes: Vec<HandoffNodeDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HandoffNodeDto {
+    pub definition_id: String,
+    pub status: String,
+    pub input_hash: String,
+    pub output_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -577,25 +624,48 @@ pub fn reject_candidate(root: &str, candidate_id: &str) -> Result<(), CommandErr
 }
 
 // ---------------------------------------------------------------------------
-// 工作流命令（P4：同步确定性链；Run 持久化/幂等/账本随 P8 #25）
+// 工作流命令（P7 #24：8 节点章事务链；Run 持久化/幂等/账本随 P8 #25）
 // ---------------------------------------------------------------------------
 
-/// 运行一次本章确定性工作流：Contract → Brief → Machine Check（P4 无
-/// AI 节点，AI 生成节点随 P7 章事务引擎；P4 的 AI 内容经 create_candidate
-/// 通道进入）。同步返回全部节点输出；`run_id` 仅本次会话有效（无持久化）。
-pub fn run_workflow(root: &str, ch: i64) -> Result<RunResultDto, CommandError> {
-    let root_path = Path::new(root);
-    let s = load_state(root_path).map_err(CommandError::from)?;
-    let contract_json = book_build_contract(root_path, &s, ch).to_json();
-    let brief = book_build_brief(root_path, &s, ch, None, None).map_err(CommandError::from)?;
-    let checks = collect_checks(root_path, "prewrite", Some(ch)).map_err(CommandError::from)?;
-    let checks_passed = checks.iter().all(|c| c.ok);
-    Ok(RunResultDto {
-        run_id: Uuid::new_v4().to_string(),
-        ch,
-        contract_json,
-        brief,
-        checks: checks
+/// 运行一次本章 8 节点链（Contract→Brief→Draft→Machine Check→Review→
+/// Polish→Settlement→Handoff，lingbi-workflow）。AI 节点经注入的
+/// `AiProvider` 执行；provider/model 快照每次运行解析并记入节点
+/// （能力 8——切换模型即失效重跑）。checkpoint 落 `工作区/工作流/`，
+/// 重跑复用输入未变的已完成节点；返回 8 节点 DTO + 机检清单 + 交付报告。
+pub async fn run_chain(
+    root: &str,
+    ch: i64,
+    provider: std::sync::Arc<dyn lingbi_ai::AiProvider>,
+) -> Result<ChainRunDto, CommandError> {
+    let report = lingbi_workflow::run_chain(Path::new(root), ch, provider)
+        .await
+        .map_err(CommandError::from)?;
+    Ok(ChainRunDto {
+        ch: report.ch,
+        status: format!("{:?}", report.status),
+        book_input_hash: report.book_input_hash,
+        nodes: report
+            .nodes
+            .iter()
+            .map(|n| ChainNodeDto {
+                node_id: n.node_id.clone(),
+                definition_id: n.definition_id.clone(),
+                definition_version: n.definition_version,
+                input_hash: n.input_hash.clone(),
+                output_hash: n.output_hash.clone(),
+                status: format!("{:?}", n.status),
+                provider: n.provider.clone(),
+                model: n.model.clone(),
+                usage: n.usage.as_ref().map(|u| UsageDto {
+                    prompt_tokens: u.prompt_tokens,
+                    completion_tokens: u.completion_tokens,
+                }),
+                error: n.error.clone(),
+                note: n.note.clone(),
+            })
+            .collect(),
+        checks: report
+            .checks
             .into_iter()
             .map(|c| CheckResultDto {
                 ok: c.ok,
@@ -603,7 +673,24 @@ pub fn run_workflow(root: &str, ch: i64) -> Result<RunResultDto, CommandError> {
                 detail: c.detail,
             })
             .collect(),
-        checks_passed,
+        draft_path: report.draft_path,
+        review_path: report.review_path,
+        handoff: report.handoff.map(|h| HandoffDto {
+            ch: h.ch,
+            chapter_path: h.chapter_path,
+            title: h.title,
+            words: h.words,
+            nodes: h
+                .nodes
+                .into_iter()
+                .map(|n| HandoffNodeDto {
+                    definition_id: n.definition_id,
+                    status: n.status,
+                    input_hash: n.input_hash,
+                    output_hash: n.output_hash,
+                })
+                .collect(),
+        }),
     })
 }
 
@@ -1191,15 +1278,28 @@ mod tests {
 
     // ---- 工作流 ----
 
-    #[test]
-    fn run_workflow_returns_sync_chain() {
-        let (_dir, root) = init_book();
-        create_chapter(&root, "夜访").expect("create");
-        let run = run_workflow(&root, 1).expect("run");
-        assert!(run.contract_json.contains("\"goal\""));
-        assert!(run.brief.contains("## "));
-        assert_eq!(run.checks.len(), 11);
-        assert!(!run.run_id.is_empty());
+    #[tokio::test]
+    async fn run_chain_returns_eight_nodes_and_settles() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let root = dir.path();
+        lingbi_workflow::testing::init_book(root, true, "第一章", Some("主角踏上修行之路。"));
+        let provider = std::sync::Arc::new(lingbi_workflow::testing::ScriptedProvider::new(
+            lingbi_workflow::testing::standard_script(
+                lingbi_workflow::testing::REVIEW_OK,
+                lingbi_workflow::testing::POLISH,
+                lingbi_workflow::testing::DRAFT,
+            ),
+        ));
+        let run = run_chain(&root.to_string_lossy(), 1, provider)
+            .await
+            .expect("run_chain");
+        assert_eq!(run.status, "Completed");
+        assert_eq!(run.nodes.len(), 8);
+        assert!(run.nodes.iter().all(|n| !n.input_hash.is_empty()));
+        let draft = run.nodes.iter().find(|n| n.definition_id == "draft").unwrap();
+        assert_eq!(draft.provider.as_deref(), Some("scripted"));
+        assert!(run.handoff.is_some());
+        assert!(root.join("定稿/正文/001-第一章.md").exists());
     }
 
     #[test]

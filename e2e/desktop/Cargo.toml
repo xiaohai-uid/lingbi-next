@@ -16,6 +16,7 @@ lingbi-migration = { path = "../../crates/lingbi-migration" }
 lingbi-mutation = { path = "../../crates/lingbi-mutation" }
 lingbi-recovery = { path = "../../crates/lingbi-recovery" }
 lingbi-storage = { path = "../../crates/lingbi-storage" }
+lingbi-workflow = { path = "../../crates/lingbi-workflow", features = ["test-support"] }
 reqwest = { version = "0.12", features = ["blocking", "json"] }
 serde_json = "1"
 sha2 = "0.10"

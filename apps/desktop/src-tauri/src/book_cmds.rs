@@ -352,15 +352,20 @@ pub fn reject_candidate(
     lingbi_commands::reject_candidate(&root, &candidate_id).map_err(CommandErrorDto::from)
 }
 
-/// 运行一次本章确定性工作流：Contract → Brief → Machine Check
-/// （P4 同步链，无 AI 节点；AI 内容经 create_candidate 通道进入）。
+/// 运行一次本章 8 节点章事务链（P7 #24）：Contract→Brief→Draft→Machine
+/// Check→Review→Polish→Settlement→Handoff。provider/model 每次运行经
+/// configured_provider 重新解析快照（能力 8——切换模型即失效重跑）；
+/// checkpoint 落 `工作区/工作流/`，重跑复用输入未变的已完成节点。
 #[tauri::command]
-pub fn run_workflow(
+pub async fn run_chain(
     state: State<'_, DesktopState>,
     ch: i64,
-) -> Result<lingbi_commands::RunResultDto, CommandErrorDto> {
+) -> Result<lingbi_commands::ChainRunDto, CommandErrorDto> {
     let root = book_root(&state)?;
-    lingbi_commands::run_workflow(&root, ch).map_err(CommandErrorDto::from)
+    let provider = crate::configured_provider(&state).await?;
+    lingbi_commands::run_chain(&root, ch, provider)
+        .await
+        .map_err(CommandErrorDto::from)
 }
 
 /// 断点诊断（引擎 `diagnose` 字节等价 JSON）：status / next_step / 新鲜度。
