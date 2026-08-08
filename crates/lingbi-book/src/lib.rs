@@ -8,6 +8,10 @@
 
 pub mod config;
 pub mod state;
+pub mod tracking;
 
 pub use config::{load_config, BookConfig};
 pub use state::{body, chapter_files, chapter_num, fm_list, frontmatter, hanzi, latest_chapter};
+pub use tracking::{
+    dump_state, init_state, load_state, merge_chapter_facts, new_state, save_state, TrackingState,
+};
