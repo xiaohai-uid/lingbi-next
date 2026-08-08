@@ -56,6 +56,18 @@ interface AppStore {
   bookCancelGeneration: () => Promise<void>;
   bookAdoptCandidate: () => Promise<void>;
   bookRejectCandidate: () => Promise<void>;
+  // P5-3 写作工具（只读展示面）
+  bookOutline: Array<Record<string, unknown>>;
+  bookContract: string;
+  bookBrief: string;
+  bookChecks: Array<{ ok: boolean; name: string; detail: string }>;
+  bookDiagnose: string;
+  toolsLoading: boolean;
+  loadOutline: () => Promise<void>;
+  loadContract: () => Promise<void>;
+  loadBrief: () => Promise<void>;
+  loadChecks: () => Promise<void>;
+  loadDiagnose: () => Promise<void>;
   chapterCreate: (title: string) => Promise<void>;
   chapterOpen: (ch: number) => Promise<void>;
   chapterSave: () => Promise<void>;
@@ -120,6 +132,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
   bookGenerationTaskId: null,
   bookStreamingText: "",
   bookCandidate: null,
+  bookOutline: [],
+  bookContract: "",
+  bookBrief: "",
+  bookChecks: [],
+  bookDiagnose: "",
+  toolsLoading: false,
 
   // ---- Book V3（P5-1）----
 
@@ -140,6 +158,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
         book,
         bookChapters,
         currentCh: null,
+        bookOutline: [],
+        bookContract: "",
+        bookBrief: "",
+        bookChecks: [],
+        bookDiagnose: "",
         chapterContent: "",
         chapterHash: "",
         lastSavedChapterContent: "",
@@ -170,6 +193,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
         book,
         bookChapters,
         currentCh: null,
+        bookOutline: [],
+        bookContract: "",
+        bookBrief: "",
+        bookChecks: [],
+        bookDiagnose: "",
         chapterContent: "",
         chapterHash: "",
         lastSavedChapterContent: "",
@@ -323,6 +351,73 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
+  // ---- P5-3 写作工具 ----
+
+  async loadOutline() {
+    set({ toolsLoading: true, error: null });
+    try {
+      const bookOutline = await desktop.getOutline();
+      set({ bookOutline, toolsLoading: false });
+    } catch (error) {
+      setError(set, error);
+      set({ toolsLoading: false });
+    }
+  },
+
+  async loadContract() {
+    const ch = get().currentCh;
+    if (ch === null) {
+      set({ bookContract: "请先创建并打开一章", error: null });
+      return;
+    }
+    set({ toolsLoading: true, error: null });
+    try {
+      const bookContract = await desktop.buildContract(ch);
+      set({ bookContract, toolsLoading: false });
+    } catch (error) {
+      setError(set, error);
+      set({ toolsLoading: false });
+    }
+  },
+
+  async loadBrief() {
+    const ch = get().currentCh;
+    if (ch === null) {
+      set({ bookBrief: "请先创建并打开一章", error: null });
+      return;
+    }
+    set({ toolsLoading: true, error: null });
+    try {
+      const bookBrief = await desktop.buildBrief(ch);
+      set({ bookBrief, toolsLoading: false });
+    } catch (error) {
+      setError(set, error);
+      set({ toolsLoading: false });
+    }
+  },
+
+  async loadChecks() {
+    set({ toolsLoading: true, error: null });
+    try {
+      const bookChecks = await desktop.runBookCheck();
+      set({ bookChecks, toolsLoading: false });
+    } catch (error) {
+      setError(set, error);
+      set({ toolsLoading: false });
+    }
+  },
+
+  async loadDiagnose() {
+    set({ toolsLoading: true, error: null });
+    try {
+      const bookDiagnose = await desktop.resumeBookWorkflow();
+      set({ bookDiagnose, toolsLoading: false });
+    } catch (error) {
+      setError(set, error);
+      set({ toolsLoading: false });
+    }
+  },
+
   async chapterOpen(ch) {
     if (!get().book) return;
     // 防抖窗口内的未保存编辑先落盘（S2-4：切章不丢字）
@@ -344,6 +439,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
         lastSavedChapterContent: chapter.body,
         saveState: "saved",
         status: "章节已打开",
+        // 章级工具数据过期（合同/任务书按章生成）
+        bookContract: "",
+        bookBrief: "",
       });
     } catch (error) {
       setError(set, error);

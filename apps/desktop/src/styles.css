@@ -190,16 +190,59 @@ select {
 
 .editor-shell {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr) 280px;
+  grid-template-columns: 200px 260px minmax(0, 1fr) 280px;
   min-height: 100vh;
 }
 
 .chapters,
+.tools,
 .candidate {
   background: #fff;
   border-right: 1px solid #d9e0e8;
   padding: 16px;
   overflow-y: auto;
+}
+
+.tools summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin: 8px 0 4px;
+}
+
+.tools details {
+  border-bottom: 1px solid #eef1f5;
+  padding-bottom: 8px;
+}
+
+.tool-output {
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 12px;
+  background: #f7f9fb;
+  border-radius: 6px;
+  padding: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.outline-list,
+.check-list {
+  list-style: none;
+  padding: 0;
+  margin: 4px 0;
+  font-size: 13px;
+}
+
+.check-list li {
+  padding: 4px 0;
+}
+
+.check-list .fail {
+  color: #b3402e;
+}
+
+.check-list .ok {
+  color: #2e7d4f;
 }
 
 .candidate {

@@ -372,6 +372,21 @@ pub fn golden_path(binary: &Path) -> Result<(), String> {
     // CHAPTER_COMMITTED 专门文案（humanizeError）：已提交章不可直写
     wait_for_text(&first, "本章已提交", Duration::from_secs(20));
 
+    // ---- P5-3 writing tools: outline/contract/brief/checks/diagnose ----
+    eprintln!("PHASE: tools slice");
+    click_summary(&first, "大纲");
+    wait_for_text(&first, "暂无细纲蓝图", Duration::from_secs(20));
+    click_summary(&first, "合同");
+    wait_for_text(&first, "goal", Duration::from_secs(20));
+    click_summary(&first, "任务书");
+    wait_for_text(&first, "写作任务书", Duration::from_secs(20));
+    click_summary(&first, "机检");
+    wait_for_text(&first, "摘要非空", Duration::from_secs(20));
+    // 验收②：机检失败项明确展示（本仓第一章无 summary → 该项真实失败）
+    wait_for_text(&first, "✘ 摘要非空", Duration::from_secs(20));
+    click_summary(&first, "断点诊断");
+    wait_for_text(&first, "next_step", Duration::from_secs(20));
+
     first.delete();
     std::thread::sleep(Duration::from_secs(1));
 

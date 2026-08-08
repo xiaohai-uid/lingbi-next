@@ -698,6 +698,47 @@ export const desktop = {
     }
   },
 
+  // ---- P5-3 写作工具（只读展示面，全部经命令层）----
+
+  async getOutline(): Promise<Array<Record<string, unknown>>> {
+    if (inTauri()) {
+      return invoke("get_outline");
+    }
+    return [];
+  },
+
+  async buildContract(ch: number): Promise<string> {
+    if (inTauri()) {
+      return invoke<string>("build_contract", { ch });
+    }
+    return '{"goal":"(无细纲,依 大纲/总纲.md 一句话)","hard_constraints":[],"forbidden":[],"foreshadow_todo":[],"ending_requirement":"","sources":[]}';
+  },
+
+  async buildBrief(ch: number): Promise<string> {
+    if (inTauri()) {
+      return invoke<string>("build_brief", { ch });
+    }
+    return "## 任务书（mock）\n\n第一段写作委托。";
+  },
+
+  async runBookCheck(stage?: string): Promise<Array<{ ok: boolean; name: string; detail: string }>> {
+    if (inTauri()) {
+      return invoke("run_check", { stage });
+    }
+    return Array.from({ length: 11 }, (_, i) => ({
+      ok: true,
+      name: `机检${i + 1}`,
+      detail: "mock 通过",
+    }));
+  },
+
+  async resumeBookWorkflow(): Promise<string> {
+    if (inTauri()) {
+      return invoke<string>("resume_workflow");
+    }
+    return '{"status":"进行中","next_step":"继续写","files":[]}';
+  },
+
   async listChapters(): Promise<ChapterMeta[]> {
     if (inTauri()) {
       return invoke<ChapterMeta[]>("list_chapters");

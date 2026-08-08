@@ -542,6 +542,17 @@ function BookEditor() {
   const bookCancelGeneration = useAppStore((state) => state.bookCancelGeneration);
   const bookAdoptCandidate = useAppStore((state) => state.bookAdoptCandidate);
   const bookRejectCandidate = useAppStore((state) => state.bookRejectCandidate);
+  const bookOutline = useAppStore((state) => state.bookOutline);
+  const bookContract = useAppStore((state) => state.bookContract);
+  const bookBrief = useAppStore((state) => state.bookBrief);
+  const bookChecks = useAppStore((state) => state.bookChecks);
+  const bookDiagnose = useAppStore((state) => state.bookDiagnose);
+  const toolsLoading = useAppStore((state) => state.toolsLoading);
+  const loadOutline = useAppStore((state) => state.loadOutline);
+  const loadContract = useAppStore((state) => state.loadContract);
+  const loadBrief = useAppStore((state) => state.loadBrief);
+  const loadChecks = useAppStore((state) => state.loadChecks);
+  const loadDiagnose = useAppStore((state) => state.loadDiagnose);
   const [instruction, setInstruction] = useState("生成一个雨夜开场");
   const [newTitle, setNewTitle] = useState("");
 
@@ -611,6 +622,55 @@ function BookEditor() {
             返回首页
           </button>
         </details>
+      </aside>
+      <aside className="tools">
+        <h2>写作工具</h2>
+        <details>
+          <summary onClick={() => void loadOutline()}>大纲</summary>
+          {bookOutline.length === 0 ? (
+            <p className="hint">暂无细纲蓝图</p>
+          ) : (
+            <ul className="outline-list">
+              {bookOutline.map((row) => (
+                <li key={String(row.ch)}>
+                  <strong>第{String(row.ch)}章</strong>{" "}
+                  {String(row.title ?? "")}
+                  {row.goal ? <p className="hint">{String(row.goal)}</p> : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </details>
+        <details>
+          <summary onClick={() => void loadContract()}>合同</summary>
+          <pre className="tool-output">{bookContract || "点击加载"}</pre>
+        </details>
+        <details>
+          <summary onClick={() => void loadBrief()}>任务书</summary>
+          <pre className="tool-output">{bookBrief || "点击加载"}</pre>
+        </details>
+        <details>
+          <summary onClick={() => void loadChecks()}>机检</summary>
+          {bookChecks.length === 0 ? (
+            <p className="hint">点击加载机检结果</p>
+          ) : (
+            <ul className="check-list">
+              {bookChecks.map((check) => (
+                <li key={check.name} className={check.ok ? "ok" : "fail"}>
+                  <strong>
+                    {check.ok ? "✔" : "✘"} {check.name}
+                  </strong>
+                  <span className="hint">{check.detail}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </details>
+        <details>
+          <summary onClick={() => void loadDiagnose()}>断点诊断</summary>
+          <pre className="tool-output">{bookDiagnose || "点击加载"}</pre>
+        </details>
+        {toolsLoading ? <p className="hint">加载中…</p> : null}
       </aside>
       <section className="editor">
         <header>
@@ -767,6 +827,7 @@ function Editor() {
           </button>
         </details>
       </aside>
+
       <section className="editor">
         <RecoveryBanner />
         <header>

@@ -65,6 +65,12 @@ describe("LingBi Next desktop shell", () => {
       bookGenerationTaskId: null,
       bookStreamingText: "",
       bookCandidate: null,
+      bookOutline: [],
+      bookContract: "",
+      bookBrief: "",
+      bookChecks: [],
+      bookDiagnose: "",
+      toolsLoading: false,
     });
   });
 
@@ -466,6 +472,32 @@ describe("LingBi Next desktop shell", () => {
     );
     // 候选已清空（再次生成需重新点生成）
     expect(screen.queryByRole("button", { name: "拒绝" })).not.toBeInTheDocument();
+  });
+
+  it("loads writing tools (outline/contract/brief/checks/diagnose)", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await createBookWithChapter(user);
+
+    // 大纲（mock 空表 → 提示）
+    await user.click(screen.getByText("大纲"));
+    expect(await screen.findByText("暂无细纲蓝图")).toBeInTheDocument();
+
+    // 合同（mock JSON）
+    await user.click(screen.getByText("合同"));
+    expect(await screen.findByText(/goal/)).toBeInTheDocument();
+
+    // 任务书（mock markdown）
+    await user.click(screen.getByText("任务书"));
+    expect(await screen.findByText(/第一段写作委托/)).toBeInTheDocument();
+
+    // 机检（mock 11 项全过）
+    await user.click(screen.getByText("机检"));
+    expect(await screen.findByText("✔ 机检1")).toBeInTheDocument();
+
+    // 断点诊断（mock JSON）
+    await user.click(screen.getByText("断点诊断"));
+    expect(await screen.findByText(/status/)).toBeInTheDocument();
   });
 
   it("rejects a Book candidate and keeps the chapter untouched", async () => {
