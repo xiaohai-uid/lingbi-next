@@ -7,5 +7,7 @@
 //! checks → gates → contract → context → brief → revision → resume → batch → learn → report。
 
 pub mod config;
+pub mod state;
 
 pub use config::{load_config, BookConfig};
+pub use state::{body, chapter_files, chapter_num, fm_list, frontmatter, hanzi, latest_chapter};
