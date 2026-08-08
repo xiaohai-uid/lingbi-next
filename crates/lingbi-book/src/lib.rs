@@ -12,6 +12,8 @@ pub mod config;
 pub mod contract;
 pub mod context;
 pub mod gates;
+pub mod resume;
+pub mod review;
 pub mod revision;
 pub mod state;
 pub mod tracking;
@@ -25,6 +27,8 @@ pub use config::{load_config, BookConfig};
 pub use contract::{build_contract, load_outline, split_list, Contract};
 pub use context::{assemble_context, budget_check, context_stdout, Context};
 pub use gates::{exit_code, gate, GateResult};
+pub use resume::{diagnose, DiagnoseResult};
+pub use review::{has_blocking, load_review, review_path, ReviewIssue};
 pub use revision::{cascade_revision, RevisionResult};
 pub use state::{body, chapter_files, chapter_num, fm_list, frontmatter, hanzi, latest_chapter};
 pub use tracking::{
