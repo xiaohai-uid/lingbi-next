@@ -739,6 +739,19 @@ export const desktop = {
     return '{"status":"进行中","next_step":"继续写","files":[]}';
   },
 
+  async bookExport(
+    ch: number,
+    format: string,
+  ): Promise<{ format: string; path: string }> {
+    if (inTauri()) {
+      return invoke("export_chapter", { ch, format });
+    }
+    return {
+      format,
+      path: `export/${String(ch).padStart(3, "0")}-mock.${format}`,
+    };
+  },
+
   async listChapters(): Promise<ChapterMeta[]> {
     if (inTauri()) {
       return invoke<ChapterMeta[]>("list_chapters");

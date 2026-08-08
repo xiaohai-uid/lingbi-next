@@ -68,6 +68,9 @@ interface AppStore {
   loadBrief: () => Promise<void>;
   loadChecks: () => Promise<void>;
   loadDiagnose: () => Promise<void>;
+  // P5-4 导出
+  lastBookExport: { format: string; path: string } | null;
+  bookExport: (format: string) => Promise<void>;
   chapterCreate: (title: string) => Promise<void>;
   chapterOpen: (ch: number) => Promise<void>;
   chapterSave: () => Promise<void>;
@@ -138,6 +141,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   bookChecks: [],
   bookDiagnose: "",
   toolsLoading: false,
+  lastBookExport: null,
 
   // ---- Book V3（P5-1）----
 
@@ -418,6 +422,21 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
+  async bookExport(format) {
+    const ch = get().currentCh;
+    if (ch === null) {
+      setError(set, new Error("请先打开一章再导出"));
+      return;
+    }
+    set({ status: "导出中...", error: null });
+    try {
+      const lastBookExport = await desktop.bookExport(ch, format);
+      set({ status: `已导出 ${format.toUpperCase()}`, lastBookExport });
+    } catch (error) {
+      setError(set, error);
+    }
+  },
+
   async chapterOpen(ch) {
     if (!get().book) return;
     // 防抖窗口内的未保存编辑先落盘（S2-4：切章不丢字）
@@ -442,6 +461,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
         // 章级工具数据过期（合同/任务书按章生成）
         bookContract: "",
         bookBrief: "",
+        // 导出提示指向旧章（P5-4：切章后清空）
+        lastBookExport: null,
       });
     } catch (error) {
       setError(set, error);

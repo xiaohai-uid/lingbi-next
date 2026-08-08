@@ -1887,8 +1887,10 @@ dependencies = [
 name = "lingbi-commands"
 version = "0.1.0"
 dependencies = [
+ "lingbi-application",
  "lingbi-book",
  "lingbi-contracts",
+ "lingbi-import-export",
  "lingbi-recovery",
  "lingbi-storage",
  "serde",

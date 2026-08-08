@@ -186,6 +186,12 @@ pub struct CancelResultDto {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ExportResultDto {
+    pub format: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct RunLedgerDto {
     /// `.lingbi/checkpoints/*.json`（append-only 历史，来自事务门写前审计）。
     pub checkpoints: Vec<Value>,
@@ -590,6 +596,54 @@ pub fn cancel_workflow(run_id: &str) -> Result<CancelResultDto, CommandError> {
     })
 }
 
+/// 导出章节（P5-4）：`export/{ch:03}-{title}.{md,txt,docx}`（export/ 为
+/// 派生目录，命令层接口；docx 为真 DOCX——ImportExportService 生成）。
+/// 内容 = 引擎 body 语义（正文 + 章标题，不含 front matter 段）。
+///
+/// 导出文件名派生自磁盘章文件名（而非 frontmatter title）：create_chapter
+/// 已校验标题字符，且真实文件名在 Windows 上不可能含路径分隔符/精确
+/// `..` 组件 → 拼接天然防穿越；frontmatter 是用户可手改字段，不用于路径。
+pub fn export_chapter(root: &str, ch: i64, format: &str) -> Result<ExportResultDto, CommandError> {
+    let chapter = open_chapter(root, ch)?;
+    let format = format.to_ascii_lowercase();
+    if !matches!(format.as_str(), "md" | "txt" | "docx") {
+        return Err(CommandError::new(
+            "UNSUPPORTED_EXPORT_FORMAT",
+            format!("unsupported export format: {format}"),
+            false,
+        ));
+    }
+    // 磁盘章文件名（chapter_file 已按 {ch:03}- 前缀定位）→ stem 即安全基名。
+    let disk_fname = chapter_file(Path::new(root), ch)?
+        .file_name()
+        .ok_or_else(|| CommandError::new("DOCUMENT_NOT_FOUND", "章文件名缺失", false))?
+        .to_string_lossy()
+        .into_owned();
+    let base = Path::new(root)
+        .join("export")
+        .join(disk_fname.trim_end_matches(".md"));
+    // ImportExportService 的导出方法为纯内容/路径（new 惰性无副作用）
+    let service = lingbi_import_export::ImportExportService::new(
+        std::sync::Arc::new(lingbi_application::DocumentApplicationService::new(root)),
+    );
+    let path = match format.as_str() {
+        "md" => service
+            .export_markdown(&chapter.body, &base.with_extension("md"))
+            .map_err(CommandError::from)?,
+        "txt" => service
+            .export_txt(&chapter.body, &base.with_extension("txt"))
+            .map_err(CommandError::from)?,
+        "docx" => service
+            .export_docx(&chapter.title, &chapter.body, &base.with_extension("docx"))
+            .map_err(CommandError::from)?,
+        _ => unreachable!("validated above"),
+    };
+    Ok(ExportResultDto {
+        format,
+        path: path.to_string_lossy().into_owned(),
+    })
+}
+
 /// 运行台账：`.lingbi/` 事务层的 append-only 历史（写前 checkpoints +
 /// 提交 receipts）。legacy 书仓（无事务层）返回空台账。
 pub fn get_run_ledger(root: &str) -> Result<RunLedgerDto, CommandError> {
@@ -690,8 +744,10 @@ fn full_chapter_bytes(path: &Path, content: &str) -> Result<Vec<u8>, CommandErro
 }
 
 /// authoritative 写入口（命令层唯一写通道）：
-/// managed → `tx::write_authoritative`（checkpoint+WAL+CAS+回执）；
-/// legacy → 引擎路径，CAS 期望哈希不符即拒写（用户字节保留）。
+/// legacy 书仓（`.lingbi/` 缺席）首次写入即托管化——`ensure_tx_layer`
+/// 幂等落地六目录（P5-4 #35 验收「legacy 打开→保存→.lingbi 自动就位」），
+/// 此后统一经 `tx::write_authoritative`（checkpoint+WAL+CAS+回执）。
+/// CAS 期望哈希不符即拒写（用户字节保留）。
 fn write_body(
     root: &str,
     fname: &str,
@@ -701,59 +757,20 @@ fn write_body(
 ) -> Result<TxReceiptDto, CommandError> {
     let root_path = Path::new(root);
     let rel = format!("{BODY_DIR}/{fname}");
-    if tx::is_managed(root_path) {
-        let receipt = tx::write_authoritative(
-            root_path,
-            &rel,
-            bytes,
-            expected_hash.as_deref(),
-            after_revision,
-        )
-        .map_err(CommandError::from)?;
-        return Ok(TxReceiptDto {
-            tx_id: receipt.tx_id.to_string(),
-            rel_path: receipt.rel_path,
-            after_revision: receipt.after_revision,
-            after_content_hash: receipt.after_content_hash,
-        });
-    }
-    // legacy：无事务层，保留引擎字节路径纪律（tmp + rename 原子写，
-    // 与 tracking::save_state 的 legacy 分支一致）；CAS 守卫照常保护用户
-    // 字节（校验失败即拒写，不产生任何磁盘变更）。
-    let path = root_path.join(&rel);
-    if let Some(exp) = &expected_hash {
-        let cur = std::fs::read(&path)
-            .ok()
-            .map(|b| lingbi_storage::sha256_hex(&b));
-        if cur.as_deref() != Some(exp.as_str()) {
-            return Err(CommandError::new(
-                "DocumentConflict",
-                "外部修改了正文,存盘被拒(用户字节保留);请重新 open_chapter 后再存",
-                false,
-            ));
-        }
-    }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            CommandError::new(
-                "DISK_WRITE_FAILED",
-                format!("创建正文目录失败: {e}"),
-                false,
-            )
-        })?;
-    }
-    let tmp = path.with_extension("md.tmp");
-    std::fs::write(&tmp, bytes).map_err(|e| {
-        CommandError::new("DISK_WRITE_FAILED", format!("写正文失败: {e}"), false)
-    })?;
-    std::fs::rename(&tmp, &path).map_err(|e| {
-        CommandError::new("DISK_WRITE_FAILED", format!("提交正文失败: {e}"), false)
-    })?;
-    Ok(TxReceiptDto {
-        tx_id: Uuid::new_v4().to_string(),
-        rel_path: rel,
+    tx::ensure_tx_layer(root_path).map_err(CommandError::from)?;
+    let receipt = tx::write_authoritative(
+        root_path,
+        &rel,
+        bytes,
+        expected_hash.as_deref(),
         after_revision,
-        after_content_hash: lingbi_storage::sha256_hex(bytes),
+    )
+    .map_err(CommandError::from)?;
+    Ok(TxReceiptDto {
+        tx_id: receipt.tx_id.to_string(),
+        rel_path: receipt.rel_path,
+        after_revision: receipt.after_revision,
+        after_content_hash: receipt.after_content_hash,
     })
 }
 
@@ -1131,6 +1148,70 @@ mod tests {
         let out = cancel_workflow("run-1").expect("cancel");
         assert!(!out.cancelled);
         assert!(out.message.contains("P8"));
+    }
+
+    #[test]
+    fn export_chapter_writes_md_txt_docx() {
+        let (_dir, root) = init_book();
+        create_chapter(&root, "夜访").expect("create");
+        let opened = open_chapter(&root, 1).expect("open");
+        save_chapter(&root, 1, "正文内容", Some(opened.content_hash)).expect("save");
+        for format in ["md", "txt", "docx"] {
+            let result = export_chapter(&root, 1, format).expect(format);
+            assert_eq!(result.format, format);
+            let path = Path::new(&result.path);
+            assert!(path.exists(), "export file missing: {}", path.display());
+            let bytes = std::fs::read(path).expect("read export");
+            assert!(!bytes.is_empty());
+            if format != "docx" {
+                let text = String::from_utf8_lossy(&bytes);
+                assert!(text.contains("正文内容"), "{format} content");
+            }
+        }
+        // 非法格式 fail-closed
+        let err = export_chapter(&root, 1, "pdf").expect_err("err");
+        assert_eq!(err.code, "UNSUPPORTED_EXPORT_FORMAT");
+    }
+
+    #[test]
+    fn export_chapter_ignores_hostile_frontmatter_title() {
+        // 路径穿越守卫：frontmatter title 是用户可手改字段——手改出
+        // 分隔符/`..` 序列不得影响导出路径（文件名派生自磁盘章文件名）。
+        let (_dir, root) = init_book();
+        create_chapter(&root, "夜访").expect("create");
+        let opened = open_chapter(&root, 1).expect("open");
+        save_chapter(&root, 1, "正文内容", Some(opened.content_hash)).expect("save");
+        let file = Path::new(&root).join("定稿/正文/001-夜访.md");
+        let poisoned = std::fs::read_to_string(&file)
+            .expect("read")
+            .replace("title: 夜访", "title: ..\\..\\..\\evil");
+        std::fs::write(&file, poisoned).expect("poison frontmatter");
+        let result = export_chapter(&root, 1, "md").expect("export");
+        let path = Path::new(&result.path);
+        let export_dir = Path::new(&root).join("export");
+        assert!(
+            path.starts_with(&export_dir),
+            "export escapes export/: {}",
+            path.display()
+        );
+        assert!(path.exists(), "export file missing: {}", path.display());
+    }
+
+    #[test]
+    fn legacy_book_first_save_adopts_tx_layer() {
+        // P5-4：legacy 书仓（无 .lingbi）首次写入即托管化
+        let (_dir, root) = init_book();
+        assert!(!Path::new(&root).join(".lingbi").exists());
+        create_chapter(&root, "夜访").expect("create");
+        // 首次写（create_chapter → write_body）后事务层就位
+        assert!(Path::new(&root).join(".lingbi/transactions").is_dir());
+        let ledger = get_run_ledger(&root).expect("ledger");
+        assert!(!ledger.receipts.is_empty());
+        // 回执指向正文（事务化写入路径）
+        assert!(ledger
+            .receipts
+            .iter()
+            .any(|r| r["rel_path"] == "定稿/正文/001-夜访.md"));
     }
 
     #[test]

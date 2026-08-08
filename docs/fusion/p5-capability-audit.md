@@ -85,5 +85,7 @@
 
 - [x] 审计矩阵落盘（31 项全量 KEEP/REDESIGN/DROP/DEFER + PARTIAL/BLOCKED_EXTERNAL/DISABLED 标注）
 - [x] 分片 1（项目/编辑/保存/重启）：真实 Windows E2E 绿（windows_novice_golden_path，release + tauri-driver + Edge WebDriver 151）
+- [x] 分片 3（#34 设定/上下文/评审）：真实 Windows E2E 绿——工具面板（大纲/合同/任务书/机检/诊断）
+- [x] 分片 4（#35 导入导出/恢复）：真实 Windows E2E 绿——导出 DOCX/MD/TXT 落盘 + crash journal 注入 → 重开恢复报告「恢复 1 条」+ 正文完好；legacy 首次写入托管化经事务门
 - [ ] 每个纵向分片真实 Windows E2E 验收（P5-1 起逐片）
 - [x] PARTIAL/BLOCKED 能力如实标注不搬回（#19 RAG DROP、#29 市场情报 BLOCKED_EXTERNAL、#28 terminal DISABLED、#31 WebDAV PARTIAL/遥测 DROP）

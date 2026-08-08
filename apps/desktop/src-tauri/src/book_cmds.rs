@@ -379,6 +379,17 @@ pub fn cancel_workflow(
     lingbi_commands::cancel_workflow(&run_id).map_err(CommandErrorDto::from)
 }
 
+/// 导出章节（P5-4）：md/txt/docx 到 书仓 export/ 目录。
+#[tauri::command]
+pub fn export_chapter(
+    state: State<'_, DesktopState>,
+    ch: i64,
+    format: String,
+) -> Result<lingbi_commands::ExportResultDto, CommandErrorDto> {
+    let root = book_root(&state)?;
+    lingbi_commands::export_chapter(&root, ch, &format).map_err(CommandErrorDto::from)
+}
+
 /// 运行台账：`.lingbi/` 事务层 append-only 历史（checkpoints + receipts）。
 #[tauri::command]
 pub fn get_run_ledger(

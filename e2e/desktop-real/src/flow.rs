@@ -1,13 +1,13 @@
 //! WINDOWS_NOVICE_GOLDEN_PATH — the novice journey through the REAL LingBi
-//! desktop binary on Book V3 (P5-1 slice: project/edit/save/restart):
+//! desktop binary on Book V3 (P5-1..P5-4 slices):
 //!
 //! launch → welcome → create book (custom temp root) → create chapter →
 //! type Chinese → save → disk evidence (定稿/正文 bytes + .lingbi tx layer)
 //! → configure AI (SSE) → generate → stream → cancel → candidate → adopt
 //! (settlement + Final Revision snapshot) → CHAPTER_COMMITTED guard on
-//! second adopt → close → relaunch → open by path → content intact.
-//!
-//! Export is re-attached in P5-4; until then the flow stops at the P5-2 gate.
+//! second adopt → export DOCX/MD/TXT → writing tools panels (大纲/合同/任务书/
+//! 机检/诊断) → crash injection (content_written journal, no receipt) →
+//! relaunch → open by path → recovery report visible → chapter intact.
 //!
 //! The flow drives the real React UI + real IPC + real Rust Core. It shares
 //! the platform wiring (display/driver) through `platform`.
@@ -275,7 +275,6 @@ pub fn golden_path(binary: &Path) -> Result<(), String> {
     click_button(&first, "保存");
     wait_for_text(&first, "已保存", Duration::from_secs(20));
 
-    eprintln!("PHASE: after first save");
     // 磁盘证据：正文文件真实存在且含用户字节。
     let body_path = root_path.join("定稿/正文/001-第一章.md");
     if !body_path.exists() {
@@ -290,7 +289,6 @@ pub fn golden_path(binary: &Path) -> Result<(), String> {
     }
 
     // ---- P5-2 AI slice: configure → generate → stream → cancel → adopt ----
-    eprintln!("PHASE: ai slice");
     // 返回首页 → 连接 AI（fake key + SSE base URL + model）
     click_summary(&first, "高级功能");
     click_button(&first, "返回首页");
@@ -372,8 +370,25 @@ pub fn golden_path(binary: &Path) -> Result<(), String> {
     // CHAPTER_COMMITTED 专门文案（humanizeError）：已提交章不可直写
     wait_for_text(&first, "本章已提交", Duration::from_secs(20));
 
+    // ---- P5-4 export slice: DOCX/MD/TXT to export/ dir ----
+    click_button(&first, "导出 DOCX");
+    click_button(&first, "导出 MD");
+    click_button(&first, "导出 TXT");
+    std::thread::sleep(Duration::from_millis(1500));
+    for ext in ["md", "txt", "docx"] {
+        let path = root_path.join(format!("export/001-第一章.{ext}"));
+        if !path.exists() {
+            return Err(format!("export file missing: {}", path.display()));
+        }
+        let bytes = std::fs::read(&path)
+            .map_err(|error| format!("read export: {error}"))?;
+        assert!(!bytes.is_empty(), "export file empty: {}", path.display());
+        if ext != "docx" {
+            let text = String::from_utf8_lossy(&bytes);
+            assert_contains(&text, "E2E候选正文", "export content")?;
+        }
+    }
     // ---- P5-3 writing tools: outline/contract/brief/checks/diagnose ----
-    eprintln!("PHASE: tools slice");
     click_summary(&first, "大纲");
     wait_for_text(&first, "暂无细纲蓝图", Duration::from_secs(20));
     click_summary(&first, "合同");
@@ -388,6 +403,32 @@ pub fn golden_path(binary: &Path) -> Result<(), String> {
     wait_for_text(&first, "next_step", Duration::from_secs(20));
 
     first.delete();
+
+    // ---- P5-4 crash injection: 崩溃窗口现场（journal ContentWritten、
+    // 内容已落盘、回执未写）→ 重开后 open_book 前向补完 ----
+    let body_bytes = std::fs::read(&body_path)
+        .map_err(|error| format!("read body for crash inject: {error}"))?;
+    let after_hash = {
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(&body_bytes);
+        digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>()
+    };
+    let tx_id = uuid::Uuid::new_v4();
+    let journal_path = root_path.join(".lingbi/transactions").join(format!("{tx_id}.json"));
+    let journal_json = serde_json::json!({
+        "id": tx_id.to_string(),
+        "document_id": uuid::Uuid::new_v4().to_string(),
+        "before_revision": 1,
+        "before_hash": "",
+        "after_revision": 2,
+        "after_hash": after_hash,
+        "phase": "content_written",
+        "created_at": "2026-08-08T00:00:00Z",
+        "body_relative_path": "定稿/正文/001-第一章.md"
+    });
+    std::fs::write(&journal_path, serde_json::to_vec(&journal_json).expect("journal json"))
+        .map_err(|error| format!("write crash journal: {error}"))?;
+
     std::thread::sleep(Duration::from_secs(1));
 
     // ---- Session 2: relaunch, open recent, everything intact ----
@@ -406,7 +447,10 @@ pub fn golden_path(binary: &Path) -> Result<(), String> {
     click_summary(&second, "高级选项");
     fill_input(&second, "项目路径", &root);
     click_button(&second, "打开");
-    wait_for_text(&second, "书仓已打开", Duration::from_secs(30));
+    // 恢复报告可见：Welcome「打开」按钮已触发 bookOpen，前向补完崩溃残留
+    // journal（恢复 1 条，异常 0 条）→ 状态文本断言（不再二次 invoke，避免
+    // 在 UI 已收敛后重跑 recovery 得到 0 条的时序假失败）。
+    wait_for_text(&second, "恢复 1 条", Duration::from_secs(30));
 
     // 打开第一章 → 正文完整（UI 层 + 命令层双重证据）。
     // P5-2 采纳后正文 = 候选内容、追踪修订 bump 到 2。

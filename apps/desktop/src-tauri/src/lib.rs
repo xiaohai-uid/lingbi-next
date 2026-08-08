@@ -936,6 +936,8 @@ pub fn run() {
             book_cmds::resume_workflow,
             book_cmds::cancel_workflow,
             book_cmds::get_run_ledger,
+            // P5-4 导出
+            book_cmds::export_chapter,
             // P5-2 AI 生成（Book V3）
             book_cmds::book_generate,
             book_cmds::book_generate_cancel,

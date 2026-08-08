@@ -500,6 +500,16 @@ describe("LingBi Next desktop shell", () => {
     expect(await screen.findByText(/status/)).toBeInTheDocument();
   });
 
+  it("exports the open chapter (Book V3)", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await createBookWithChapter(user);
+
+    await user.click(screen.getByRole("button", { name: "导出 MD" }));
+    expect(await screen.findByText(/已导出 MD/)).toBeInTheDocument();
+    expect(screen.getByTitle(/export\//)).toBeInTheDocument();
+  });
+
   it("rejects a Book candidate and keeps the chapter untouched", async () => {
     const user = userEvent.setup();
     render(<App />);

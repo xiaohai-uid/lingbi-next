@@ -95,9 +95,13 @@ fn book_v3_command_path_full_chain() {
     assert!(tracking.chapters.contains_key("1"));
 
     // 6. get_run_ledger / resume_workflow / cancel_workflow
+    // P5-4：legacy 书仓首次写入即托管化——台账含正文事务回执
     let ledger = get_run_ledger(&root).expect("run_ledger");
-    assert!(ledger.receipts.is_empty()); // legacy 书仓无事务层,台账为空
-    assert!(ledger.checkpoints.is_empty());
+    assert!(!ledger.receipts.is_empty(), "first save adopts tx layer: {ledger:?}");
+    assert!(ledger
+        .receipts
+        .iter()
+        .any(|r| r["rel_path"] == "定稿/正文/001-第一章.md"));
     let resume = resume_workflow(&root).expect("resume_workflow");
     assert!(resume.contains("\"status\""));
     let cancel = cancel_workflow("run-1").expect("cancel_workflow");

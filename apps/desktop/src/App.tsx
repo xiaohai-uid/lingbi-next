@@ -553,6 +553,8 @@ function BookEditor() {
   const loadBrief = useAppStore((state) => state.loadBrief);
   const loadChecks = useAppStore((state) => state.loadChecks);
   const loadDiagnose = useAppStore((state) => state.loadDiagnose);
+  const bookExport = useAppStore((state) => state.bookExport);
+  const lastBookExport = useAppStore((state) => state.lastBookExport);
   const [instruction, setInstruction] = useState("生成一个雨夜开场");
   const [newTitle, setNewTitle] = useState("");
 
@@ -709,6 +711,29 @@ function BookEditor() {
           </button>
           {bookGenerating ? (
             <button onClick={() => void bookCancelGeneration()}>取消</button>
+          ) : null}
+          <button
+            disabled={currentCh === null}
+            onClick={() => void bookExport("docx")}
+          >
+            导出 DOCX
+          </button>
+          <button
+            disabled={currentCh === null}
+            onClick={() => void bookExport("md")}
+          >
+            导出 MD
+          </button>
+          <button
+            disabled={currentCh === null}
+            onClick={() => void bookExport("txt")}
+          >
+            导出 TXT
+          </button>
+          {lastBookExport ? (
+            <span className="hint" title={lastBookExport.path}>
+              已导出到 {lastBookExport.path}
+            </span>
           ) : null}
         </footer>
         {error ? (
