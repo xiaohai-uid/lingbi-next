@@ -58,6 +58,21 @@ fn fill_input(driver: &crate::webdriver::WebDriver, label: &str, value: &str) {
     assert_eq!(value.as_str(), Some("ok"), "fill input {label}: {value}");
 }
 
+/// 读取输入框当前值（P5-5 高级设置回显断言）。
+fn read_input(driver: &crate::webdriver::WebDriver, label: &str) -> String {
+    let label_json = serde_json::to_string(label).expect("json");
+    let script = format!(
+        r#"
+        const inputs = Array.from(document.querySelectorAll('input'));
+        const input = inputs.find((item) => item.getAttribute('aria-label') === {label_json});
+        if (!input) return 'missing';
+        return input.value;
+        "#
+    );
+    let value = driver.execute(&script);
+    value.as_str().unwrap_or("").to_owned()
+}
+
 /// Click a <details> summary by its text to expand/collapse it.
 fn click_summary(driver: &crate::webdriver::WebDriver, text: &str) {
     let text_json = serde_json::to_string(text).expect("json");
@@ -299,6 +314,9 @@ pub fn golden_path(binary: &Path) -> Result<(), String> {
     click_summary(&first, "高级设置");
     fill_input(&first, "自定义 Base URL", &sse_url);
     fill_input(&first, "自定义模型 ID", "e2e");
+    // P5-5 高级设置：自定义温度/tokens（保存后 keyring 持久化）
+    fill_input(&first, "温度", "0.3");
+    fill_input(&first, "最大 tokens", "512");
     click_button(&first, "保存设置");
     wait_for_text(&first, "AI 设置已保存", Duration::from_secs(20));
     let health = invoke(&first, "provider_test", serde_json::json!({}));
@@ -314,6 +332,17 @@ pub fn golden_path(binary: &Path) -> Result<(), String> {
         status["model_id"].as_str(),
         Some("e2e"),
         "provider_status model: {status}"
+    );
+    // P5-5：保存后立即读回一致（shell 层证据）
+    assert_eq!(
+        status["temperature"].as_f64(),
+        Some(0.3),
+        "status temperature: {status}"
+    );
+    assert_eq!(
+        status["max_tokens"].as_u64(),
+        Some(512),
+        "status max_tokens: {status}"
     );
 
     // 返回 → 打开已有作品 → 路径打开书仓 → 第一章
@@ -401,6 +430,10 @@ pub fn golden_path(binary: &Path) -> Result<(), String> {
     wait_for_text(&first, "✘ 摘要非空", Duration::from_secs(20));
     click_summary(&first, "断点诊断");
     wait_for_text(&first, "next_step", Duration::from_secs(20));
+    // P5-5 声明式技能卡：只读展示（题材引导精简版 + P9 占位）
+    click_summary(&first, "技能");
+    wait_for_text(&first, "题材引导（精简版）", Duration::from_secs(20));
+    wait_for_text(&first, "4 步写作模式", Duration::from_secs(20));
 
     first.delete();
 
@@ -464,6 +497,42 @@ pub fn golden_path(binary: &Path) -> Result<(), String> {
     )?;
     assert_eq!(reopened["ch"].as_i64(), Some(1), "reopened ch: {reopened}");
     assert_eq!(reopened["state_revision"].as_i64(), Some(2), "state revision: {reopened}");
+
+    // P5-5 高级设置持久化：重启后温度/tokens 仍在（keyring → provider_status
+    // 回显 → UI 预填）。双证据：UI 输入框值 + shell 读回。
+    click_summary(&second, "高级功能");
+    click_button(&second, "返回首页");
+    wait_for_text(&second, "连接 AI", Duration::from_secs(20));
+    click_button(&second, "连接 AI");
+    wait_for_text(&second, "选择 AI 服务", Duration::from_secs(20));
+    click_summary(&second, "高级设置");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if read_input(&second, "温度") == "0.3"
+            && read_input(&second, "最大 tokens") == "512"
+        {
+            break;
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "advanced settings not prefilled: temp={} tokens={}",
+                read_input(&second, "温度"),
+                read_input(&second, "最大 tokens")
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    let persisted = invoke(&second, "provider_status", serde_json::json!({}));
+    assert_eq!(
+        persisted["temperature"].as_f64(),
+        Some(0.3),
+        "persisted temperature: {persisted}"
+    );
+    assert_eq!(
+        persisted["max_tokens"].as_u64(),
+        Some(512),
+        "persisted max_tokens: {persisted}"
+    );
 
     second.delete();
     let _ = driver_process;

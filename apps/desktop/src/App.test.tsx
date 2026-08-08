@@ -212,6 +212,20 @@ describe("LingBi Next desktop shell", () => {
     expect(lastProviderConfig?.providerId).toBe("openai");
   });
 
+  it("高级设置回显：重启后已存温度/tokens 预填（P5-5）", async () => {
+    const { lastProviderConfig } = await import("./lib/desktop");
+    // 模拟上一次保存的持久化值（mock provider_status 读回）
+    expect(lastProviderConfig).not.toBeNull();
+    lastProviderConfig!.temperature = 0.3;
+    lastProviderConfig!.maxTokens = 123;
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: /连接 AI/ }));
+    await user.click(screen.getByText("高级设置"));
+    expect((screen.getByLabelText("温度") as HTMLInputElement).value).toBe("0.3");
+    expect((screen.getByLabelText("最大 tokens") as HTMLInputElement).value).toBe("123");
+  });
+
   it("maps every typed AI/disk error to Chinese guidance with a next step", () => {
     const codes = [
       "AiAuthFailed",
@@ -498,6 +512,12 @@ describe("LingBi Next desktop shell", () => {
     // 断点诊断（mock JSON）
     await user.click(screen.getByText("断点诊断"));
     expect(await screen.findByText(/status/)).toBeInTheDocument();
+
+    // 技能（P5-5 声明式只读卡：mock 两卡 + P9 占位提示）
+    await user.click(screen.getByText("技能"));
+    expect(await screen.findByText("题材引导（精简版）")).toBeInTheDocument();
+    expect(screen.getByText("章节骨架")).toBeInTheDocument();
+    expect(screen.getByText(/4 步写作模式（P9 上线）/)).toBeInTheDocument();
   });
 
   it("exports the open chapter (Book V3)", async () => {

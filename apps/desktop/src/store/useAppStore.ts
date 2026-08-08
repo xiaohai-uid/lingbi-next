@@ -12,6 +12,7 @@ import {
   type ProviderTestResult,
   type RecentProject,
   type Session,
+  type SkillCard,
 } from "../lib/desktop";
 
 /// Book V3 保存状态（P5-1：saved/saving/conflict 可见）。
@@ -71,6 +72,9 @@ interface AppStore {
   // P5-4 导出
   lastBookExport: { format: string; path: string } | null;
   bookExport: (format: string) => Promise<void>;
+  // P5-5 声明式技巧卡（只读展示）
+  skills: SkillCard[];
+  loadSkills: () => Promise<void>;
   chapterCreate: (title: string) => Promise<void>;
   chapterOpen: (ch: number) => Promise<void>;
   chapterSave: () => Promise<void>;
@@ -142,6 +146,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   bookDiagnose: "",
   toolsLoading: false,
   lastBookExport: null,
+  skills: [],
 
   // ---- Book V3（P5-1）----
 
@@ -419,6 +424,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
     } catch (error) {
       setError(set, error);
       set({ toolsLoading: false });
+    }
+  },
+
+  // P5-5 声明式技巧卡：只读静态数据，加载一次即可（不随章清空）。
+  async loadSkills() {
+    set({ error: null });
+    try {
+      const skills = await desktop.listSkills();
+      set({ skills });
+    } catch (error) {
+      setError(set, error);
     }
   },
 

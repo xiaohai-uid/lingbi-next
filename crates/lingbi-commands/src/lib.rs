@@ -191,6 +191,16 @@ pub struct ExportResultDto {
     pub path: String,
 }
 
+/// 声明式写作技巧卡（P5-5）：只读静态数据——无文件系统/进程/执行能力，
+/// UI 仅渲染展示。完整小白 4 步模式随 P9（#26）产品 UI。
+#[derive(Debug, Clone, Serialize)]
+pub struct SkillCardDto {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub steps: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RunLedgerDto {
     /// `.lingbi/checkpoints/*.json`（append-only 历史，来自事务门写前审计）。
@@ -642,6 +652,34 @@ pub fn export_chapter(root: &str, ch: i64, format: &str) -> Result<ExportResultD
         format,
         path: path.to_string_lossy().into_owned(),
     })
+}
+
+/// 预置声明式技巧卡（P5-5 声明式子集，审计 #27 题材引导 REDESIGN /
+/// #28 Skill 执行 DISABLED）：题材引导精简版等只读卡片。纯静态数据表，
+/// 无任何执行面——调用方仅渲染展示。
+pub fn list_skills() -> Vec<SkillCardDto> {
+    vec![
+        SkillCardDto {
+            id: "theme-guide-lite".to_owned(),
+            title: "题材引导（精简版）".to_owned(),
+            description: "从一句话设定开始，逐步收拢题材方向与卖点。".to_owned(),
+            steps: vec![
+                "一句话设定：谁、在什么世界、要做什么".to_owned(),
+                "核心卖点：读者为什么点进来".to_owned(),
+                "冲突引擎：每章至少一个悬念或转折".to_owned(),
+            ],
+        },
+        SkillCardDto {
+            id: "chapter-skeleton".to_owned(),
+            title: "章节骨架".to_owned(),
+            description: "一章一目标：开场、推进、钩子三段式。".to_owned(),
+            steps: vec![
+                "开场钩子：前 200 字抓住读者".to_owned(),
+                "目标推进：本章信息/成长/冲突至少前进一步".to_owned(),
+                "结尾悬念：留下一个想读下去的钩子".to_owned(),
+            ],
+        },
+    ]
 }
 
 /// 运行台账：`.lingbi/` 事务层的 append-only 历史（写前 checkpoints +
@@ -1212,6 +1250,21 @@ mod tests {
             .receipts
             .iter()
             .any(|r| r["rel_path"] == "定稿/正文/001-夜访.md"));
+    }
+
+    #[test]
+    fn list_skills_returns_declarative_readonly_cards() {
+        // P5-5：声明式子集——卡片为纯静态数据，字段非空、id 唯一
+        let cards = list_skills();
+        assert!(!cards.is_empty(), "at least one prebuilt card");
+        let mut ids = std::collections::HashSet::new();
+        for card in &cards {
+            assert!(!card.id.is_empty(), "card id");
+            assert!(!card.title.is_empty(), "card title: {}", card.id);
+            assert!(!card.description.is_empty(), "card description: {}", card.id);
+            assert!(!card.steps.is_empty(), "card steps: {}", card.id);
+            assert!(ids.insert(&card.id), "duplicate card id: {}", card.id);
+        }
     }
 
     #[test]

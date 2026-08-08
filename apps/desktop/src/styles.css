@@ -245,6 +245,18 @@ select {
   color: #2e7d4f;
 }
 
+/* P5-5 声明式技能卡（只读展示） */
+.skill-card ol {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  color: #55647a;
+  font-size: 12px;
+}
+
+.skill-card ol li {
+  padding: 1px 0;
+}
+
 .candidate {
   border-right: 0;
   border-left: 1px solid #d9e0e8;

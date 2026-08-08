@@ -71,6 +71,23 @@ export interface ProviderTestResult {
   error: string | null;
 }
 
+/// P5-5：provider_status 回显（含持久化的高级设置，永不含 API key）。
+export interface ProviderStatus {
+  configured: boolean;
+  provider_id: string;
+  model_id: string;
+  temperature: number;
+  max_tokens: number;
+}
+
+/// P5-5 声明式技巧卡（只读展示，无执行能力）。
+export interface SkillCard {
+  id: string;
+  title: string;
+  description: string;
+  steps: string[];
+}
+
 export interface ExportResult {
   format: string;
   path: string;
@@ -461,6 +478,49 @@ export const desktop = {
       temperature,
       maxTokens,
     };
+  },
+
+  async providerStatus(): Promise<ProviderStatus> {
+    if (inTauri()) {
+      return invoke<ProviderStatus>("provider_status");
+    }
+    const cfg = lastProviderConfig;
+    return {
+      configured: Boolean(cfg?.key),
+      provider_id: cfg?.providerId ?? "openai",
+      model_id: cfg?.model ?? "",
+      temperature: cfg?.temperature ?? 0.7,
+      max_tokens: cfg?.maxTokens ?? 2048,
+    };
+  },
+
+  /// P5-5 声明式技巧卡：只读静态数据。
+  async listSkills(): Promise<SkillCard[]> {
+    if (inTauri()) {
+      return invoke<SkillCard[]>("list_skills");
+    }
+    return [
+      {
+        id: "theme-guide-lite",
+        title: "题材引导（精简版）",
+        description: "从一句话设定开始，逐步收拢题材方向与卖点。",
+        steps: [
+          "一句话设定：谁、在什么世界、要做什么",
+          "核心卖点：读者为什么点进来",
+          "冲突引擎：每章至少一个悬念或转折",
+        ],
+      },
+      {
+        id: "chapter-skeleton",
+        title: "章节骨架",
+        description: "一章一目标：开场、推进、钩子三段式。",
+        steps: [
+          "开场钩子：前 200 字抓住读者",
+          "目标推进：本章信息/成长/冲突至少前进一步",
+          "结尾悬念：留下一个想读下去的钩子",
+        ],
+      },
+    ];
   },
 
   async testConnection(): Promise<ProviderTestResult> {

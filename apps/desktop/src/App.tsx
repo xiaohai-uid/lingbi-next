@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { markdown } from "@codemirror/lang-markdown";
 import { useAppStore } from "./store/useAppStore";
-import type { CommandError } from "./lib/desktop";
+import { desktop, type CommandError } from "./lib/desktop";
 
 interface HumanError {
   title: string;
@@ -150,6 +150,19 @@ function Welcome() {
     void loadRecent();
     void loadProviders();
   }, [loadRecent, loadProviders]);
+
+  // P5-5 高级设置回显：重启后从 keyring 读回已存温度/tokens（永不含 key）
+  useEffect(() => {
+    let cancelled = false;
+    void desktop.providerStatus().then((status) => {
+      if (cancelled || !status.configured) return;
+      setTemperature(String(status.temperature));
+      setMaxTokens(String(status.max_tokens));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -553,6 +566,8 @@ function BookEditor() {
   const loadBrief = useAppStore((state) => state.loadBrief);
   const loadChecks = useAppStore((state) => state.loadChecks);
   const loadDiagnose = useAppStore((state) => state.loadDiagnose);
+  const skills = useAppStore((state) => state.skills);
+  const loadSkills = useAppStore((state) => state.loadSkills);
   const bookExport = useAppStore((state) => state.bookExport);
   const lastBookExport = useAppStore((state) => state.lastBookExport);
   const [instruction, setInstruction] = useState("生成一个雨夜开场");
@@ -671,6 +686,27 @@ function BookEditor() {
         <details>
           <summary onClick={() => void loadDiagnose()}>断点诊断</summary>
           <pre className="tool-output">{bookDiagnose || "点击加载"}</pre>
+        </details>
+        <details>
+          <summary onClick={() => void loadSkills()}>技能</summary>
+          {skills.length === 0 ? (
+            <p className="hint">点击加载技能卡</p>
+          ) : (
+            <ul className="check-list">
+              {skills.map((card) => (
+                <li key={card.id} className="skill-card">
+                  <strong>{card.title}</strong>
+                  <span className="hint">{card.description}</span>
+                  <ol>
+                    {card.steps.map((step, index) => (
+                      <li key={index}>{step}</li>
+                    ))}
+                  </ol>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="hint">完整小白 4 步写作模式（P9 上线）</p>
         </details>
         {toolsLoading ? <p className="hint">加载中…</p> : null}
       </aside>

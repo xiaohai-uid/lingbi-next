@@ -390,6 +390,12 @@ pub fn export_chapter(
     lingbi_commands::export_chapter(&root, ch, &format).map_err(CommandErrorDto::from)
 }
 
+/// 声明式技巧卡（P5-5）：只读静态数据，无执行能力。
+#[tauri::command]
+pub fn list_skills() -> Vec<lingbi_commands::SkillCardDto> {
+    lingbi_commands::list_skills()
+}
+
 /// 运行台账：`.lingbi/` 事务层 append-only 历史（checkpoints + receipts）。
 #[tauri::command]
 pub fn get_run_ledger(

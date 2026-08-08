@@ -517,9 +517,13 @@ struct ProviderStatusDto {
     configured: bool,
     provider_id: String,
     model_id: String,
+    /// P5-5 高级设置回显：与保存值一致（默认 0.7 / 2048），重启后仍在。
+    temperature: f32,
+    max_tokens: u32,
 }
 
-/// Whether an AI service is configured, and with which provider/model.
+/// Whether an AI service is configured, and with which provider/model
+/// (plus the persisted 高级设置 temperature/max_tokens for read-back).
 /// Never returns the API key.
 #[tauri::command]
 async fn provider_status(
@@ -544,10 +548,13 @@ async fn provider_status(
         .map_err(CommandErrorDto::from)?
         .map(|value| value.expose().to_owned())
         .unwrap_or_default();
+    let settings = generation_settings(&state).await?;
     Ok(ProviderStatusDto {
         configured: key.is_some(),
         provider_id,
         model_id,
+        temperature: settings.temperature,
+        max_tokens: settings.max_tokens,
     })
 }
 
@@ -938,6 +945,8 @@ pub fn run() {
             book_cmds::get_run_ledger,
             // P5-4 导出
             book_cmds::export_chapter,
+            // P5-5 声明式技巧卡（只读）
+            book_cmds::list_skills,
             // P5-2 AI 生成（Book V3）
             book_cmds::book_generate,
             book_cmds::book_generate_cancel,
