@@ -13,6 +13,7 @@ pub mod config;
 pub mod contract;
 pub mod context;
 pub mod gates;
+pub mod learn;
 pub mod resume;
 pub mod review;
 pub mod revision;
@@ -21,6 +22,7 @@ pub mod tracking;
 pub mod views;
 
 mod json_engine;
+mod py_num;
 
 pub use batch::{create_batch_plan, create_plan_stdout, merge_batch, BatchMergeResult, BatchPlan};
 pub use brief::build_brief;
@@ -29,6 +31,7 @@ pub use config::{load_config, BookConfig};
 pub use contract::{build_contract, load_outline, split_list, Contract};
 pub use context::{assemble_context, budget_check, context_stdout, Context};
 pub use gates::{exit_code, gate, GateResult};
+pub use learn::{absorb_review, absorb_stdout, harvest_quotes, learn_stdout, style_stats, trend, trend_stdout};
 pub use resume::{diagnose, DiagnoseResult};
 pub use review::{has_blocking, load_review, review_path, ReviewIssue};
 pub use revision::{cascade_revision, RevisionResult};
