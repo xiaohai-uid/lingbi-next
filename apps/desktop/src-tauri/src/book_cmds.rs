@@ -15,6 +15,28 @@ use crate::{
     command_error, CommandErrorDto, BookGenerationEventDto, BookGenerateStartDto, DesktopState,
 };
 
+/// start_chain 立即返回的 run_id（P8 #25）。
+#[derive(serde::Serialize)]
+pub struct StartChainDto {
+    pub run_id: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct CancelChainDto {
+    pub run_id: String,
+    pub cancelled: bool,
+}
+
+/// get_chain_status：done + 状态 + 全量结果（完成后一次性取出）。
+#[derive(serde::Serialize)]
+pub struct ChainStatusDto {
+    pub run_id: String,
+    pub done: bool,
+    pub status: Option<String>,
+    pub result: Option<lingbi_commands::ChainRunDto>,
+    pub error: Option<String>,
+}
+
 /// 会话根读取：全部无参命令从这里取书仓；未 open_book 即 fail-closed。
 fn book_root(state: &State<'_, DesktopState>) -> Result<String, CommandErrorDto> {
     state
@@ -352,20 +374,113 @@ pub fn reject_candidate(
     lingbi_commands::reject_candidate(&root, &candidate_id).map_err(CommandErrorDto::from)
 }
 
-/// 运行一次本章 8 节点章事务链（P7 #24）：Contract→Brief→Draft→Machine
-/// Check→Review→Polish→Settlement→Handoff。provider/model 每次运行经
-/// configured_provider 重新解析快照（能力 8——切换模型即失效重跑）；
-/// checkpoint 落 `工作区/工作流/`，重跑复用输入未变的已完成节点。
+/// 启动一次本章 8 节点章事务链（P7 #24 / P8 #25）：
+/// Contract→Brief→Draft→Machine Check→Review→Polish→Settlement→Handoff。
+/// 后台运行（tokio::spawn）：立即返回 run_id；取消经 cancel_chain 传播到
+/// provider 流；结果经 get_chain_status 轮询（内存结果或 run 台账）。
+/// provider/model 每次运行经 configured_provider 重新解析快照（能力 8）。
 #[tauri::command]
-pub async fn run_chain(
+pub async fn start_chain(
     state: State<'_, DesktopState>,
     ch: i64,
-) -> Result<lingbi_commands::ChainRunDto, CommandErrorDto> {
+) -> Result<StartChainDto, CommandErrorDto> {
     let root = book_root(&state)?;
     let provider = crate::configured_provider(&state).await?;
-    lingbi_commands::run_chain(&root, ch, provider)
-        .await
-        .map_err(CommandErrorDto::from)
+    let cancel = lingbi_ai::CancellationToken::new();
+    let run_id = Uuid::new_v4().to_string();
+    state
+        .chain_tokens
+        .lock()
+        .map_err(|_| command_error("LOCK_ERROR", "chain token lock", false))?
+        .insert(run_id.clone(), std::sync::Arc::new(cancel.clone()));
+
+    let task_tokens = state.chain_tokens.clone();
+    let task_results = state.chain_results.clone();
+    let task_root = root.clone();
+    let task_provider = provider.clone();
+    let task_cancel = cancel.clone();
+    let task_run_id = run_id.clone();
+    tokio::spawn(async move {
+        let control = lingbi_workflow::run::RunControl {
+            cancel: Some(task_cancel),
+            budget: None, // P9 UI 暴露预算设置
+        };
+        let result = lingbi_commands::run_chain(&task_root, ch, task_provider, &control).await;
+        task_results
+            .lock()
+            .map_err(|_| command_error("LOCK_ERROR", "chain result lock", false))
+            .map(|mut m| {
+                m.insert(task_run_id.clone(), result);
+            })
+            .ok();
+        task_tokens.lock().map(|mut m| m.remove(&task_run_id)).ok();
+    });
+    Ok(StartChainDto { run_id })
+}
+
+/// 取消运行中的章事务链（P8 #25）：取消令牌 → 节点间检查 + provider 流传播。
+#[tauri::command]
+pub fn cancel_chain(
+    state: State<'_, DesktopState>,
+    run_id: String,
+) -> Result<CancelChainDto, CommandErrorDto> {
+    let cancelled = state
+        .chain_tokens
+        .lock()
+        .map_err(|_| command_error("LOCK_ERROR", "chain token lock", false))?
+        .get(&run_id)
+        .map(|token| {
+            token.cancel();
+            true
+        })
+        .unwrap_or(false);
+    Ok(CancelChainDto { run_id, cancelled })
+}
+
+/// 查询章事务链运行状态（P8 #25）：内存结果优先；否则读 run 台账
+/// （`工作区/工作流/runs/{run_id}.json`，重启后仍可查）。
+#[tauri::command]
+pub fn get_chain_status(
+    state: State<'_, DesktopState>,
+    run_id: String,
+) -> Result<ChainStatusDto, CommandErrorDto> {
+    let mut guard = state
+        .chain_results
+        .lock()
+        .map_err(|_| command_error("LOCK_ERROR", "chain result lock", false))?;
+    if let Some(result) = guard.remove(&run_id) {
+        return Ok(match result {
+            Ok(dto) => ChainStatusDto {
+                run_id,
+                done: true,
+                status: Some(dto.status.clone()),
+                result: Some(dto),
+                error: None,
+            },
+            Err(e) => ChainStatusDto {
+                run_id,
+                done: true,
+                status: None,
+                result: None,
+                error: Some(e.message),
+            },
+        });
+    }
+    drop(guard);
+    // 运行中/重启后：读 run 台账
+    let root = book_root(&state)?;
+    let rec = lingbi_workflow::run::load_run(std::path::Path::new(&root), &run_id)
+        .map_err(CommandErrorDto::from)?;
+    Ok(ChainStatusDto {
+        run_id,
+        done: rec
+            .as_ref()
+            .map(|r| r.status != lingbi_workflow::RunStatus::Running)
+            .unwrap_or(false),
+        status: rec.map(|r| format!("{:?}", r.status)),
+        result: None,
+        error: None,
+    })
 }
 
 /// 断点诊断（引擎 `diagnose` 字节等价 JSON）：status / next_step / 新鲜度。
@@ -373,15 +488,6 @@ pub async fn run_chain(
 pub fn resume_workflow(state: State<'_, DesktopState>) -> Result<String, CommandErrorDto> {
     let root = book_root(&state)?;
     lingbi_commands::resume_workflow(&root).map_err(CommandErrorDto::from)
-}
-
-/// 取消工作流。P4 同步链无后台任务可取消——空操作并如实说明
-/// （真取消随 P8 #25）。与书仓会话无关（全局命令），不要求 open_book。
-#[tauri::command]
-pub fn cancel_workflow(
-    run_id: String,
-) -> Result<lingbi_commands::CancelResultDto, CommandErrorDto> {
-    lingbi_commands::cancel_workflow(&run_id).map_err(CommandErrorDto::from)
 }
 
 /// 导出章节（P5-4）：md/txt/docx 到 书仓 export/ 目录。

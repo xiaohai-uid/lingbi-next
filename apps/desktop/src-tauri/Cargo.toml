@@ -20,6 +20,7 @@ lingbi-ai = { path = "../../../crates/lingbi-ai" }
 lingbi-application = { path = "../../../crates/lingbi-application" }
 lingbi-book = { path = "../../../crates/lingbi-book" }
 lingbi-commands = { path = "../../../crates/lingbi-commands" }
+lingbi-workflow = { path = "../../../crates/lingbi-workflow" }
 lingbi-contracts = { path = "../../../crates/lingbi-contracts" }
 lingbi-domain = { path = "../../../crates/lingbi-domain" }
 lingbi-import-export = { path = "../../../crates/lingbi-import-export" }

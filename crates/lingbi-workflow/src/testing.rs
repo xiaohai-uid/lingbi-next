@@ -14,6 +14,7 @@ pub struct ScriptedProvider {
     fail_marker: Option<String>,
     provider_id: String,
     model_id: String,
+    sleep_ms: u64,
     calls: Arc<AtomicUsize>,
 }
 
@@ -24,6 +25,7 @@ impl ScriptedProvider {
             fail_marker: None,
             provider_id: "scripted".to_owned(),
             model_id: "scripted-model".to_owned(),
+            sleep_ms: 0,
             calls: Arc::new(AtomicUsize::new(0)),
         }
     }
@@ -37,6 +39,12 @@ impl ScriptedProvider {
     /// user/system 内容含标记时节点注入 AiError::Network（模拟节点失败）。
     pub fn fail_on(mut self, marker: &str) -> Self {
         self.fail_marker = Some(marker.to_owned());
+        self
+    }
+
+    /// 每次流响应前 sleep（取消传播测试用）。
+    pub fn slow(mut self, sleep_ms: u64) -> Self {
+        self.sleep_ms = sleep_ms;
         self
     }
 
@@ -57,12 +65,16 @@ impl AiProvider for ScriptedProvider {
     fn stream_chat(&self, request: ChatRequest) -> AiStream {
         self.calls.fetch_add(1, Ordering::SeqCst);
         let response = (self.script)(&request);
+        let sleep_ms = self.sleep_ms;
         let fail = self
             .fail_marker
             .as_ref()
             .map(|m| request.messages.iter().any(|msg| msg.content.contains(m)))
             .unwrap_or(false);
         Box::pin(async_stream::stream! {
+            if sleep_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
+            }
             if fail {
                 yield Err(AiError::Network);
                 return;

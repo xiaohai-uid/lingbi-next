@@ -72,6 +72,8 @@ pub enum ChainStatus {
     Failed,
     /// OutputGate 拒绝（修复次数用尽仍有阻塞问题；reject_reason 给原因）。
     Rejected,
+    /// 用户取消（Run→Node→Provider 传播）。
+    Cancelled,
 }
 
 /// 交付报告（handoff 节点产物，落 `工作区/工作流/handoff-{ch:03}.json`）。
@@ -98,6 +100,7 @@ pub async fn run_chain(
     root: &Path,
     ch: i64,
     provider: Arc<dyn AiProvider>,
+    control: &crate::run::RunControl,
 ) -> Result<ChainReport, AppError> {
     let book_hash = crate::hash::book_input_hash(root)?;
     let provider_id = provider.provider_id().to_owned();
@@ -119,6 +122,7 @@ pub async fn run_chain(
     let mut draft_path: Option<String> = None;
     let mut handoff: Option<HandoffReport> = None;
     let mut review_path: Option<String> = None;
+    let mut budget_used: u64 = 0;
 
     for (i, def_id) in CHAIN_DEFINITIONS.iter().enumerate() {
         let _ = crate::run::finish_run(
@@ -149,6 +153,8 @@ pub async fn run_chain(
                         draft_path: &mut draft_path,
                         checks: &mut checks,
                         review_path: &mut review_path,
+                    control,
+                    budget_used: &mut budget_used,
                     },
                     "review",
                     5,
@@ -180,6 +186,8 @@ pub async fn run_chain(
                             draft_path: &mut draft_path,
                             checks: &mut checks,
                             review_path: &mut review_path,
+                        control,
+                        budget_used: &mut budget_used,
                         },
                         "polish",
                         6,
@@ -213,6 +221,8 @@ pub async fn run_chain(
                         draft_path: &mut draft_path,
                         checks: &mut checks,
                         review_path: &mut review_path,
+                    control,
+                    budget_used: &mut budget_used,
                     },
                     "polish",
                     6,
@@ -249,6 +259,8 @@ pub async fn run_chain(
                 draft_path: &mut draft_path,
                 checks: &mut checks,
                 review_path: &mut review_path,
+            control,
+            budget_used: &mut budget_used,
             },
             def_id,
             i,
@@ -306,6 +318,7 @@ pub async fn run_chain(
         ChainStatus::Halted => crate::run::RunStatus::Halted,
         ChainStatus::Failed => crate::run::RunStatus::Failed,
         ChainStatus::Rejected => crate::run::RunStatus::Rejected,
+        ChainStatus::Cancelled => crate::run::RunStatus::Cancelled,
     };
     let current_node = cp
         .nodes
@@ -352,6 +365,8 @@ struct RunCtx<'a> {
     draft_path: &'a mut Option<String>,
     checks: &'a mut Vec<lingbi_book::CheckResult>,
     review_path: &'a mut Option<String>,
+    control: &'a crate::run::RunControl,
+    budget_used: &'a mut u64,
 }
 
 /// 单节点执行结果（复用 / 完成 / 失败 / 机检停机）。
@@ -360,6 +375,7 @@ enum NodeOutcome {
     Completed(NodeRecord),
     Failed(NodeRecord),
     Halted(NodeRecord),
+    Cancelled(NodeRecord),
 }
 
 /// 应用执行结果到链状态（status/reject_reason 副作用 + 需要 upsert 的记录）。
@@ -383,12 +399,24 @@ fn apply_outcome(
             {
                 *reject_reason = Some(RejectReason::RatchetRejected);
             }
+            if r.error
+                .as_deref()
+                .map(|e| e.contains("预算超限"))
+                .unwrap_or(false)
+            {
+                *reject_reason = Some(RejectReason::BudgetExceeded);
+            }
             *status = ChainStatus::Failed;
             ApplyOutcome::Record(r)
         }
         NodeOutcome::Halted(r) => {
             *status = ChainStatus::Halted;
             *reject_reason = Some(RejectReason::MachineCheckFailed);
+            ApplyOutcome::Record(r)
+        }
+        NodeOutcome::Cancelled(r) => {
+            *status = ChainStatus::Cancelled;
+            *reject_reason = Some(RejectReason::Cancelled);
             ApplyOutcome::Record(r)
         }
     }
@@ -417,6 +445,26 @@ async fn run_node_once(
     def_id: &str,
     i: usize,
 ) -> Result<NodeOutcome, AppError> {
+    // 取消检查：节点间传播（Run→Node）；AI 节点执行时再传播到 provider
+    if let Some(cancel) = &ctx.control.cancel {
+        if cancel.is_cancelled() {
+            let record = NodeRecord {
+                node_id: format!("{def_id}-{}", uuid::Uuid::new_v4()),
+                definition_id: def_id.to_string(),
+                definition_version: chain::definition_version(def_id),
+                input_hash: String::new(),
+                output_hash: String::new(),
+                status: NodeStatus::Cancelled,
+                provider: None,
+                model: None,
+                usage: None,
+                idempotency_key: None,
+                error: None,
+                note: Some("用户取消".to_owned()),
+            };
+            return Ok(NodeOutcome::Cancelled(record));
+        }
+    }
     let existing_chapter_hash = crate::hash::chapter_state_hash(ctx.root, ctx.ch)?;
     let upstream = if i == 0 {
         String::new()
@@ -503,6 +551,10 @@ async fn run_node_once(
         note: None,
     };
 
+    let max_tokens = ctx.control.budget.map(|b| {
+        let remaining = b.max_completion_tokens.saturating_sub(*ctx.budget_used);
+        remaining.min(4096) as u32
+    });
     let artifact = match execute_node(
         def_id,
         ctx.root,
@@ -511,6 +563,8 @@ async fn run_node_once(
         ctx.provider,
         ctx.draft_path,
         ctx.nodes,
+        ctx.control,
+        max_tokens,
     )
     .await
     {
@@ -561,8 +615,23 @@ async fn run_node_once(
             },
         );
     }
+    // 预算检查（Run→Node）：累计 completion tokens 超限 → 本节点 Failed
+    if let Some(budget) = ctx.control.budget {
+        if let Some(usage) = &record.usage {
+            *ctx.budget_used += u64::from(usage.completion_tokens);
+            if *ctx.budget_used > budget.max_completion_tokens {
+                record.status = NodeStatus::Failed;
+                record.error = Some(format!(
+                    "预算超限: 累计 {} > 上限 {} (BudgetExceeded)",
+                    ctx.budget_used, budget.max_completion_tokens
+                ));
+                return Ok(NodeOutcome::Failed(record));
+            }
+        }
+    }
     Ok(NodeOutcome::Completed(record))
 }
+
 /// 执行单个节点（确定性同步 / AI 异步）。`nodes` = 当前 checkpoint 节点
 /// （handoff 报告需全链节点摘要，含本节点之前全部记录）。
 async fn execute_node(
@@ -573,14 +642,17 @@ async fn execute_node(
     provider: &dyn AiProvider,
     draft_path: &Option<String>,
     nodes: &[NodeRecord],
+    control: &crate::run::RunControl,
+    max_tokens: Option<u32>,
 ) -> Result<NodeArtifact, AppError> {
+    let cancel = control.cancel.as_ref();
     match def_id {
         "contract" => exec_contract(root, ch),
         "brief" => exec_brief(root, ch),
-        "draft" => chain::exec_draft(root, ch, node_id, provider).await,
+        "draft" => chain::exec_draft(root, ch, node_id, provider, cancel, max_tokens).await,
         "machine-check" => chain::exec_machine_check(root, ch, draft_path),
-        "review" => chain::exec_review(root, ch, provider, draft_path).await,
-        "polish" => chain::exec_polish(root, ch, node_id, provider, draft_path).await,
+        "review" => chain::exec_review(root, ch, provider, draft_path, cancel, max_tokens).await,
+        "polish" => chain::exec_polish(root, ch, node_id, provider, draft_path, cancel, max_tokens).await,
         "settlement" => chain::exec_settlement(root, ch, draft_path),
         "handoff" => chain::exec_handoff(root, ch, nodes),
         _ => Err(AppError::new(

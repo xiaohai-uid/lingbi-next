@@ -19,6 +19,8 @@ pub enum NodeStatus {
     Failed,
     /// 上游输入变化作废（output_hash 已清空，绝不复用）
     Invalidated,
+    /// 用户取消（Run→Node→Provider 传播，P8 #25）
+    Cancelled,
 }
 
 /// 单节点持久化记录。

@@ -34,7 +34,7 @@ async fn managed_full_chain_via_commands() {
     let provider = Arc::new(ScriptedProvider::new(standard_script(
         REVIEW_OK, "润色稿", DRAFT,
     )));
-    let run = run_chain(&root, 1, provider.clone()).await.expect("run_chain");
+    let run = run_chain(&root, 1, provider.clone(), &lingbi_workflow::run::RunControl::default()).await.expect("run_chain");
     assert_eq!(run.status, "Completed", "8 节点链完成");
     assert_eq!(run.nodes.len(), 8);
     assert!(run.nodes.iter().all(|n| !n.input_hash.is_empty() && !n.output_hash.is_empty()));
@@ -77,7 +77,7 @@ async fn legacy_chain_resume_reuses_completed_nodes() {
         ScriptedProvider::new(standard_script(REVIEW_OK, "润色稿", DRAFT))
             .fail_on("资深网络小说作家"),
     );
-    let r1 = run_chain(&root, 1, failing).await.expect("run1");
+    let r1 = run_chain(&root, 1, failing, &lingbi_workflow::run::RunControl::default()).await.expect("run1");
     assert_eq!(r1.status, "Failed");
     let draft1 = r1.nodes.iter().find(|n| n.definition_id == "draft").unwrap();
     assert_eq!(draft1.status, "Failed");
@@ -87,7 +87,7 @@ async fn legacy_chain_resume_reuses_completed_nodes() {
     let good = Arc::new(ScriptedProvider::new(standard_script(
         REVIEW_OK, "润色稿", DRAFT,
     )));
-    let r2 = run_chain(&root, 1, good.clone()).await.expect("run2");
+    let r2 = run_chain(&root, 1, good.clone(), &lingbi_workflow::run::RunControl::default()).await.expect("run2");
     assert_eq!(r2.status, "Completed");
     for def in ["contract", "brief"] {
         let a = r1.nodes.iter().find(|n| n.definition_id == def).unwrap();
@@ -110,7 +110,7 @@ async fn outline_change_invalidates_and_ratchet_blocks_resettlement() {
     book_plan(Path::new(&root), "第一章", "主角踏上修行之路。");
 
     let p = Arc::new(ScriptedProvider::new(standard_script(REVIEW_OK, "润色稿", DRAFT)));
-    let r1 = run_chain(&root, 1, p.clone()).await.expect("run1");
+    let r1 = run_chain(&root, 1, p.clone(), &lingbi_workflow::run::RunControl::default()).await.expect("run1");
     assert_eq!(r1.status, "Completed");
 
     // 改大纲（书仓上下文指纹变化）→ 重跑：全部节点失效重跑，
@@ -118,7 +118,7 @@ async fn outline_change_invalidates_and_ratchet_blocks_resettlement() {
     let outline = Path::new(&root).join("大纲");
     std::fs::create_dir_all(&outline).expect("大纲 dir");
     std::fs::write(outline.join("章纲.md"), "# 第一章\n\n主角入宗门修行。\n").expect("大纲写入");
-    let r2 = run_chain(&root, 1, p.clone()).await.expect("run2");
+    let r2 = run_chain(&root, 1, p.clone(), &lingbi_workflow::run::RunControl::default()).await.expect("run2");
     assert_eq!(r2.status, "Failed");
     let contract2 = r2.nodes.iter().find(|n| n.definition_id == "contract").unwrap();
     let contract1 = r1.nodes.iter().find(|n| n.definition_id == "contract").unwrap();
@@ -143,10 +143,76 @@ async fn missing_book_fails_contract_node_with_reason() {
     let provider = Arc::new(ScriptedProvider::new(standard_script(
         REVIEW_OK, "润色稿", DRAFT,
     )));
-    let run = run_chain(&root, 1, provider).await.expect("run");
+    let run = run_chain(&root, 1, provider, &lingbi_workflow::run::RunControl::default()).await.expect("run");
     assert_eq!(run.status, "Failed");
     let contract = run.nodes.iter().find(|n| n.definition_id == "contract").unwrap();
     assert_eq!(contract.status, "Failed");
     assert!(contract.error.as_deref().unwrap().contains("缺追踪状态"));
     assert_eq!(run.nodes.len(), 1, "链止于第一个失败节点");
+}
+
+// ---------------------------------------------------------------------------
+// P8 #45：取消/预算传播（命令层）
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn cancellation_propagates_to_provider_and_skips_settlement() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let root = dir.path().join("新书").to_string_lossy().into_owned();
+    create_book(&root, "新书").expect("create_book");
+    create_chapter(&root, "第一章").expect("create_chapter");
+    book_plan(Path::new(&root), "第一章", "主角踏上修行之路。");
+
+    let provider = Arc::new(
+        ScriptedProvider::new(standard_script(REVIEW_OK, "润色稿", DRAFT)).slow(200),
+    );
+    let cancel = lingbi_ai::CancellationToken::new();
+    let control = lingbi_workflow::run::RunControl {
+        cancel: Some(cancel.clone()),
+        budget: None,
+    };
+    let handle = tokio::spawn({
+        let root = root.clone();
+        let provider = provider.clone();
+        let control = control.clone();
+        async move { run_chain(&root, 1, provider, &control).await.expect("run") }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+    cancel.cancel();
+    let run = handle.await.expect("join");
+    assert_eq!(run.status, "Cancelled", "取消传播到链");
+    assert_eq!(run.reject_reason.as_deref(), Some("Cancelled"));
+    let tracking = get_tracking_state(&root).expect("tracking");
+    assert!(!tracking.chapters.contains_key("1"), "取消 → 不结算");
+    // run 台账 Cancelled（get_chain_status 数据源）
+    let rec = lingbi_workflow::run::load_run(Path::new(&root), &run.run_id)
+        .unwrap()
+        .expect("台账");
+    assert_eq!(format!("{:?}", rec.status), "Cancelled");
+}
+
+#[tokio::test]
+async fn budget_exceeded_returns_typed_reason() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let root = dir.path().join("新书").to_string_lossy().into_owned();
+    create_book(&root, "新书").expect("create_book");
+    create_chapter(&root, "第一章").expect("create_chapter");
+    book_plan(Path::new(&root), "第一章", "主角踏上修行之路。");
+
+    let provider = Arc::new(ScriptedProvider::new(standard_script(
+        REVIEW_OK, "润色稿", DRAFT,
+    )));
+    let control = lingbi_workflow::run::RunControl {
+        cancel: None,
+        budget: Some(lingbi_workflow::run::TokenBudget {
+            max_completion_tokens: 10,
+        }),
+    };
+    let run = run_chain(&root, 1, provider, &control).await.expect("run");
+    assert_eq!(run.status, "Failed");
+    assert_eq!(run.reject_reason.as_deref(), Some("BudgetExceeded"));
+    let draft = run.nodes.iter().find(|n| n.definition_id == "draft").unwrap();
+    assert!(draft.error.as_deref().unwrap().contains("预算超限"));
+    let tracking = get_tracking_state(&root).expect("tracking");
+    assert!(!tracking.chapters.contains_key("1"), "预算超限 → 不结算");
 }

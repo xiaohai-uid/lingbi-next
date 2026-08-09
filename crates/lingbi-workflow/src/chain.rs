@@ -127,12 +127,17 @@ fn map_ai_error(e: AiError) -> AppError {
 }
 
 /// 收集 provider 流：正文 + Usage（节点级 token 记账）。
+/// cancel 给定 → 经 stream_chat_with_cancel 传播到 provider 流（P8 #25）。
 pub async fn run_ai(
     provider: &dyn AiProvider,
     request: ChatRequest,
+    cancel: Option<&lingbi_ai::CancellationToken>,
 ) -> Result<(String, TokenUsage), AppError> {
     use futures::StreamExt;
-    let mut stream = provider.stream_chat(request);
+    let mut stream = match cancel {
+        Some(token) => provider.stream_chat_with_cancel(request, token.clone()),
+        None => provider.stream_chat(request),
+    };
     let mut text = String::new();
     let mut usage = TokenUsage {
         prompt_tokens: 0,
@@ -183,6 +188,8 @@ pub async fn exec_draft(
     ch: i64,
     node_id: &str,
     provider: &dyn AiProvider,
+    cancel: Option<&lingbi_ai::CancellationToken>,
+    max_tokens: Option<u32>,
 ) -> Result<NodeArtifact, AppError> {
     let s = lingbi_book::load_state(root)?;
     let brief = lingbi_book::build_brief(root, &s, ch, None, None)?;
@@ -198,9 +205,9 @@ pub async fn exec_draft(
             },
         ],
         temperature: 0.7,
-        max_tokens: 4096,
+        max_tokens: max_tokens.unwrap_or(4096),
     };
-    let (text, usage) = run_ai(provider, request).await?;
+    let (text, usage) = run_ai(provider, request, cancel).await?;
     let rel = draft_rel_path(node_id, ch);
     write_file(root, &rel, text.as_bytes())?;
     Ok(NodeArtifact {
@@ -268,6 +275,8 @@ pub async fn exec_review(
     ch: i64,
     provider: &dyn AiProvider,
     draft_path: &Option<String>,
+    cancel: Option<&lingbi_ai::CancellationToken>,
+    max_tokens: Option<u32>,
 ) -> Result<NodeArtifact, AppError> {
     let s = lingbi_book::load_state(root)?;
     let brief = lingbi_book::build_brief(root, &s, ch, None, None)?;
@@ -287,9 +296,9 @@ pub async fn exec_review(
             content: format!("{REVIEW_INSTRUCTION}\n\n任务书:\n{brief}\n\n草稿:\n{draft}"),
         }],
         temperature: 0.2,
-        max_tokens: 4096,
+        max_tokens: max_tokens.unwrap_or(4096),
     };
-    let (text, usage) = run_ai(provider, request).await?;
+    let (text, usage) = run_ai(provider, request, cancel).await?;
     let (issues, errors) = lingbi_book::parse_review_json(&text)?;
     if !errors.is_empty() {
         return Err(AppError::new(
@@ -327,6 +336,8 @@ pub async fn exec_polish(
     node_id: &str,
     provider: &dyn AiProvider,
     draft_path: &Option<String>,
+    cancel: Option<&lingbi_ai::CancellationToken>,
+    max_tokens: Option<u32>,
 ) -> Result<NodeArtifact, AppError> {
     let current = match draft_path {
         Some(rel) => read_file(root, rel)?,
@@ -370,9 +381,9 @@ pub async fn exec_polish(
             ),
         }],
         temperature: 0.5,
-        max_tokens: 4096,
+        max_tokens: max_tokens.unwrap_or(4096),
     };
-    let (text, usage) = run_ai(provider, request).await?;
+    let (text, usage) = run_ai(provider, request, cancel).await?;
     let rel = draft_rel_path(node_id, ch);
     write_file(root, &rel, text.as_bytes())?;
     Ok(NodeArtifact {

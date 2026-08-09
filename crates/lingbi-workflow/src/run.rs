@@ -37,6 +37,21 @@ pub enum RejectReason {
     Cancelled,
 }
 
+/// 运行控制（P8 #25）：取消与 token 预算的 Run→Node→Provider 传播。
+#[derive(Clone, Default)]
+pub struct RunControl {
+    /// 取消令牌：节点间检查 + AI 节点经 stream_chat_with_cancel 传播。
+    pub cancel: Option<lingbi_ai::CancellationToken>,
+    /// 运行级预算：累计 completion tokens 超限 → BudgetExceeded。
+    pub budget: Option<TokenBudget>,
+}
+
+/// 运行级 token 预算（completion tokens）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TokenBudget {
+    pub max_completion_tokens: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunRecord {
     pub run_id: String,

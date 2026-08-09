@@ -19,8 +19,9 @@ uuid = { version = "1", features = ["v4"] }
 futures = "0.3"
 chrono = "0.4"
 async-stream = "0.3"
+tokio = { version = "1", features = ["time"] }
 
 [dev-dependencies]
 lingbi-workflow = { path = ".", features = ["test-support"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 tempfile = "3"

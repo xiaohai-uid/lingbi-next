@@ -8,12 +8,13 @@
 //! create_chapter / list_chapters / open_chapter / save_chapter —— 章正文
 //! build_contract / build_brief / run_check            —— 写作辅助
 //! create_candidate / adopt_candidate / reject_candidate —— 候选稿
-//! run_chain / resume_workflow / cancel_workflow / get_run_ledger —— 工作流
+//! run_chain / resume_workflow / get_run_ledger —— 工作流
 //! ```
 //!
-//! `run_chain`（P7 #24）= 8 节点章事务链（lingbi-workflow），异步收
-//! `Arc<dyn AiProvider>`；`resume/cancel_workflow/get_run_ledger` 保持 P4
-//! 语义，Run 持久化/幂等/账本收口属 P8（#25）。
+//! `run_chain`（P7 #24 / P8 #25）= 8 节点章事务链（lingbi-workflow），
+//! 异步收 `Arc<dyn AiProvider>` + `RunControl`（取消/预算传播）；取消由
+//! 调用方持有 CancellationToken 实现（壳层 start_chain/cancel_chain）；
+//! `resume_workflow`/`get_run_ledger` 保持 P4 语义。
 //!
 //! 纪律（与引擎/既有 crate 的差异，fail-closed 声明）：
 //! - 本 crate 是薄包装：领域逻辑全部复用 `lingbi-book` / `lingbi-recovery`，
@@ -25,9 +26,8 @@
 //! - 候选稿生命周期为 P4 最小版（`工作区/草稿/` mutable 文件，不经事务
 //!   门）；P7 章事务引擎（#24）以 `.lingbi/candidates` 状态机接管，本模块
 //!   不提前实现 P7 语义。
-//! - run_chain（P7）为异步 8 节点链，AI 节点经注入的 `AiProvider` 执行；
-//!   resume/cancel_workflow 保持 P4 同步语义，Run 持久化/幂等/账本收口属
-//!   P8（#25），cancel 为空操作并说明原因。
+//! - run_chain（P7/P8）为异步 8 节点链，AI 节点经注入的 `AiProvider` 执行，
+//!   取消/预算经 `RunControl` 传播（Run→Node→Provider）。
 //! - 建章 frontmatter 模板为应用语义（引擎无「建章」命令，正文由外部写
 //!   入）；字段名与引擎解析器一致，commit 时 `merge_chapter_facts` 照常
 //!   消化，不触碰引擎既有字节路径。
@@ -229,13 +229,6 @@ pub struct HandoffNodeDto {
     pub status: String,
     pub input_hash: String,
     pub output_hash: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct CancelResultDto {
-    pub run_id: String,
-    pub cancelled: bool,
-    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -642,8 +635,9 @@ pub async fn run_chain(
     root: &str,
     ch: i64,
     provider: std::sync::Arc<dyn lingbi_ai::AiProvider>,
+    control: &lingbi_workflow::run::RunControl,
 ) -> Result<ChainRunDto, CommandError> {
-    let report = lingbi_workflow::run_chain(Path::new(root), ch, provider)
+    let report = lingbi_workflow::run_chain(Path::new(root), ch, provider, control)
         .await
         .map_err(CommandError::from)?;
     Ok(ChainRunDto {
@@ -707,17 +701,6 @@ pub async fn run_chain(
 /// 各文件新鲜度——崩溃或中断后续跑前先看它。
 pub fn resume_workflow(root: &str) -> Result<String, CommandError> {
     Ok(diagnose(Path::new(root), None).to_json())
-}
-
-/// 取消工作流。P4 工作流为同步确定性链：调用方拿到结果时运行已结束，
-/// 无后台任务可取消——返回空操作并如实说明；真取消
-/// （Run→Node→Provider 传播）随 P8（#25）。
-pub fn cancel_workflow(run_id: &str) -> Result<CancelResultDto, CommandError> {
-    Ok(CancelResultDto {
-        run_id: run_id.to_owned(),
-        cancelled: false,
-        message: "P4 同步工作流无进行中后台运行;真取消随 P8(#25)".to_owned(),
-    })
 }
 
 /// 导出章节（P5-4）：`export/{ch:03}-{title}.{md,txt,docx}`（export/ 为
@@ -1299,9 +1282,14 @@ mod tests {
                 lingbi_workflow::testing::DRAFT,
             ),
         ));
-        let run = run_chain(&root.to_string_lossy(), 1, provider)
-            .await
-            .expect("run_chain");
+        let run = run_chain(
+            &root.to_string_lossy(),
+            1,
+            provider,
+            &lingbi_workflow::run::RunControl::default(),
+        )
+        .await
+        .expect("run_chain");
         assert_eq!(run.status, "Completed");
         assert_eq!(run.nodes.len(), 8);
         assert!(run.nodes.iter().all(|n| !n.input_hash.is_empty()));
@@ -1318,13 +1306,6 @@ mod tests {
         assert!(json.contains("\"status\""));
         assert!(json.contains("\"next_step\""));
         assert!(json.contains("\"files\""));
-    }
-
-    #[test]
-    fn cancel_workflow_idempotent_sync_semantics() {
-        let out = cancel_workflow("run-1").expect("cancel");
-        assert!(!out.cancelled);
-        assert!(out.message.contains("P8"));
     }
 
     #[test]

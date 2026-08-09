@@ -73,6 +73,7 @@ fn main() {
         std::path::Path::new(&root),
         ch,
         Arc::new(ScriptedProvider::new(draft)),
+        &lingbi_workflow::run::RunControl::default(),
     ));
     match report {
         Ok(r) => {

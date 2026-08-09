@@ -1924,6 +1924,7 @@ dependencies = [
  "lingbi-recovery",
  "lingbi-security",
  "lingbi-storage",
+ "lingbi-workflow",
  "lingbi-writing",
  "serde",
  "serde_json",
@@ -2031,6 +2032,7 @@ name = "lingbi-workflow"
 version = "0.1.0"
 dependencies = [
  "async-stream",
+ "chrono",
  "futures",
  "lingbi-ai",
  "lingbi-book",
@@ -2039,6 +2041,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tokio",
  "uuid",
 ]
 

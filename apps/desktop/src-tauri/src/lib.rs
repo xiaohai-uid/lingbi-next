@@ -33,6 +33,14 @@ struct DesktopState {
     book_root: Mutex<Option<String>>,
     /// P5-2：Book V3 生成任务取消令牌（book_generate）。
     book_generation_tokens: Mutex<HashMap<Uuid, lingbi_ai::CancellationToken>>,
+    /// P8 #25：章事务链运行取消令牌（start_chain → cancel_chain）。
+    /// Arc<Mutex>：后台任务克隆持有，完成后自清理。
+    chain_tokens: Arc<Mutex<HashMap<String, std::sync::Arc<lingbi_ai::CancellationToken>>>>,
+    /// P8 #25：章事务链运行结果（start_chain 完成/失败后；重启后从 run 台账
+    /// 经 get_chain_status 只读状态）。
+    chain_results: Arc<
+        Mutex<HashMap<String, Result<lingbi_commands::ChainRunDto, lingbi_commands::CommandError>>>,
+    >,
 }
 
 #[derive(Clone)]
@@ -939,9 +947,10 @@ pub fn run() {
             book_cmds::create_candidate,
             book_cmds::adopt_candidate,
             book_cmds::reject_candidate,
-            book_cmds::run_chain,
+            book_cmds::start_chain,
+            book_cmds::cancel_chain,
+            book_cmds::get_chain_status,
             book_cmds::resume_workflow,
-            book_cmds::cancel_workflow,
             book_cmds::get_run_ledger,
             // P5-4 导出
             book_cmds::export_chapter,
