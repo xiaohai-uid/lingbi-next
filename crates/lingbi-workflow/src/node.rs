@@ -39,6 +39,9 @@ pub struct NodeRecord {
     pub model: Option<String>,
     /// AI 节点 token 用量（节点级记账；账本持久化随 P8 #25）。
     pub usage: Option<lingbi_ai::TokenUsage>,
+    /// 副作用节点幂等键（draft/settlement = node_id；崩溃恢复对照用，
+    /// 配合棘轮 + CAS 保证副作用不重复执行，P8 #25）。
+    pub idempotency_key: Option<String>,
     /// 失败原因（status == Failed 时非空）。
     pub error: Option<String>,
     /// 语义说明（如「无阻塞问题，跳过改写」/「状态门禁未过」）。

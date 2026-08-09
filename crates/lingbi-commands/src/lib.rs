@@ -176,8 +176,14 @@ pub struct AdoptResultDto {
 #[derive(Debug, Clone, Serialize)]
 pub struct ChainRunDto {
     pub ch: i64,
-    /// Completed / Halted（机检门禁不过）/ Failed（节点失败）。
+    /// Completed / Halted（机检门禁不过）/ Failed（节点失败）/ Rejected（OutputGate 拒绝）。
     pub status: String,
+    /// 本次运行 run_id（台账 `工作区/工作流/runs/{run_id}.json`，重启后可查）。
+    pub run_id: String,
+    /// OutputGate 已执行修复次数。
+    pub repair_attempts: u32,
+    /// 类型化拒绝原因（停机/拒绝/失败时）。
+    pub reject_reason: Option<String>,
     pub book_input_hash: String,
     pub nodes: Vec<ChainNodeDto>,
     pub checks: Vec<CheckResultDto>,
@@ -643,6 +649,9 @@ pub async fn run_chain(
     Ok(ChainRunDto {
         ch: report.ch,
         status: format!("{:?}", report.status),
+        run_id: report.run_id,
+        repair_attempts: report.repair_attempts,
+        reject_reason: report.reject_reason.map(|r| format!("{:?}", r)),
         book_input_hash: report.book_input_hash,
         nodes: report
             .nodes

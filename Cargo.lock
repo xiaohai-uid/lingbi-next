@@ -1321,6 +1321,7 @@ name = "lingbi-workflow"
 version = "0.1.0"
 dependencies = [
  "async-stream",
+ "chrono",
  "futures",
  "lingbi-ai",
  "lingbi-book",

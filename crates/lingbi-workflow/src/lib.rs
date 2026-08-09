@@ -20,6 +20,7 @@ pub mod chain;
 pub mod checkpoint;
 pub mod hash;
 pub mod node;
+pub mod run;
 #[cfg(feature = "test-support")]
 pub mod testing;
 
@@ -35,14 +36,22 @@ use std::sync::Arc;
 pub use crate::chain::{CHAIN_DEFINITIONS, CHAIN_VERSION, DRAFT_DIR};
 pub use crate::hash::{book_input_hash, chapter_state_hash};
 pub use crate::node::NodeStatus as Status;
+pub use crate::run::{RejectReason, RunRecord, RunStatus};
 
 /// 链运行结果。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ChainReport {
     pub ch: i64,
     /// Completed = 全链完成（含结算/交付）；Halted = 机检状态门禁不过；
-    /// Failed = 节点执行失败（error 见失败节点记录）。
+    /// Failed = 节点执行失败（error 见失败节点记录）；Rejected = OutputGate
+    /// 拒绝（P8 #25）。
     pub status: ChainStatus,
+    /// 本次运行 run_id（台账 `工作区/工作流/runs/{run_id}.json`）。
+    pub run_id: String,
+    /// OutputGate 已执行修复次数。
+    pub repair_attempts: u32,
+    /// 类型化拒绝原因（停机/拒绝时）。
+    pub reject_reason: Option<RejectReason>,
     pub book_input_hash: String,
     /// 节点记录（按定义序；失败/停机时止于失败节点）。
     pub nodes: Vec<NodeRecord>,
@@ -60,6 +69,8 @@ pub enum ChainStatus {
     Completed,
     Halted,
     Failed,
+    /// OutputGate 拒绝（修复次数用尽仍有阻塞问题；reject_reason 给原因）。
+    Rejected,
 }
 
 /// 交付报告（handoff 节点产物，落 `工作区/工作流/handoff-{ch:03}.json`）。
@@ -95,6 +106,13 @@ pub async fn run_chain(
     cp.book_input_hash = book_hash.clone(); // 审计：反映本次运行的指纹
     normalize_nodes(&mut cp.nodes);
 
+    // Run 台账（P8 #25）：Running 落盘 → 终态原子改写（崩溃后可从台账
+    // 回答「上次跑到哪、什么状态」）
+    let run_id = uuid::Uuid::new_v4().to_string();
+    crate::run::begin_run(root, &run_id, CHAIN_VERSION)?;
+    let mut repair_attempts: u32 = 0;
+    let mut reject_reason: Option<RejectReason> = None;
+
     let mut status = ChainStatus::Completed;
     let mut checks: Vec<lingbi_book::CheckResult> = Vec::new();
     let mut draft_path: Option<String> = None;
@@ -102,6 +120,14 @@ pub async fn run_chain(
     let mut review_path: Option<String> = None;
 
     for (i, def_id) in CHAIN_DEFINITIONS.iter().enumerate() {
+        let _ = crate::run::finish_run(
+            root,
+            &run_id,
+            crate::run::RunStatus::Running,
+            def_id,
+            repair_attempts,
+            reject_reason,
+        );
         let existing_chapter_hash = crate::hash::chapter_state_hash(root, ch)?;
         let upstream = if i == 0 {
             String::new()
@@ -159,8 +185,10 @@ pub async fn run_chain(
         }
 
         // 执行
+        let node_id = format!("{def_id}-{}", uuid::Uuid::new_v4());
         let mut record = NodeRecord {
-            node_id: format!("{def_id}-{}", uuid::Uuid::new_v4()),
+            // 副作用节点（draft/settlement）幂等键 = node_id（崩溃恢复对照）
+            node_id: node_id.clone(),
             definition_id: def_id.to_string(),
             definition_version: chain::definition_version(def_id),
             input_hash,
@@ -169,6 +197,7 @@ pub async fn run_chain(
             provider: chain::is_ai_node(def_id).then(|| provider_id.clone()),
             model: chain::is_ai_node(def_id).then(|| model_id.clone()),
             usage: None,
+            idempotency_key: matches!(*def_id, "draft" | "settlement").then(|| node_id),
             error: None,
             note: None,
         };
@@ -188,6 +217,9 @@ pub async fn run_chain(
             Err(e) => {
                 record.status = NodeStatus::Failed;
                 record.error = Some(e.message.clone());
+                if *def_id == "settlement" && e.message.contains("棘轮") {
+                    reject_reason = Some(RejectReason::RatchetRejected);
+                }
                 status = ChainStatus::Failed;
                 upsert(&mut cp.nodes, record);
                 break;
@@ -205,6 +237,7 @@ pub async fn run_chain(
             review_path = None;
             if !artifact.gate_passed {
                 status = ChainStatus::Halted;
+                reject_reason = Some(RejectReason::MachineCheckFailed);
                 upsert(&mut cp.nodes, record);
                 break;
             }
@@ -258,9 +291,32 @@ pub async fn run_chain(
 
     checkpoint::save(root, &cp)?;
 
+    let run_status = match status {
+        ChainStatus::Completed => crate::run::RunStatus::Completed,
+        ChainStatus::Halted => crate::run::RunStatus::Halted,
+        ChainStatus::Failed => crate::run::RunStatus::Failed,
+        ChainStatus::Rejected => crate::run::RunStatus::Rejected,
+    };
+    let current_node = cp
+        .nodes
+        .last()
+        .map(|n| n.definition_id.clone())
+        .unwrap_or_default();
+    let _ = crate::run::finish_run(
+        root,
+        &run_id,
+        run_status,
+        &current_node,
+        repair_attempts,
+        reject_reason,
+    );
+
     Ok(ChainReport {
         ch,
         status,
+        run_id,
+        repair_attempts,
+        reject_reason,
         book_input_hash: book_hash,
         nodes: cp.nodes,
         checks,

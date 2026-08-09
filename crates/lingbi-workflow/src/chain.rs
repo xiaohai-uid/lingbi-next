@@ -420,6 +420,16 @@ pub fn exec_settlement(
         expected.as_deref(),
         None,
     )?;
+    // 注入 failpoint（测试/恢复演练）：正文已事务落盘、结算前模拟崩溃。
+    // 生产路径不设置该环境变量；重跑时 CAS（期望 = 当前正文）幂等重写 +
+    // cmd_commit 章已提交守卫 → 修订只 bump 一次。
+    if std::env::var("LINGBI_FAILPOINT").as_deref() == Ok("settlement-after-body") {
+        return Err(AppError::new(
+            ErrorCode::DiskWriteFailed,
+            "failpoint: settlement-after-body 模拟崩溃(正文已落盘,结算未完成)".to_owned(),
+            false,
+        ));
+    }
     let out = lingbi_book::cmd::cmd_commit(root, ch, true)?;
     if out.exit != 0 {
         return Err(AppError::new(
