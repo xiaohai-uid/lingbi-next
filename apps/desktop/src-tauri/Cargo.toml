@@ -1,6 +1,6 @@
 [package]
 name = "lingbi-desktop"
-version = "0.1.0"
+version = "0.9.0"
 description = "LingBi Next Tauri desktop shell"
 authors = ["LingBi"]
 edition = "2021"
