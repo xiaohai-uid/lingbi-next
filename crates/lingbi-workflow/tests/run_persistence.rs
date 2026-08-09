@@ -29,7 +29,7 @@ async fn run_ledger_persisted_with_terminal_status() {
     let provider = Arc::new(ScriptedProvider::new(standard_script(
         REVIEW_OK, POLISH, DRAFT,
     )));
-    let report = run_chain(root, 1, provider).await.expect("run");
+    let report = run_chain(root, 1, provider, &Default::default()).await.expect("run");
     assert_eq!(report.status, ChainStatus::Completed);
     assert!(!report.run_id.is_empty());
 
@@ -61,7 +61,7 @@ async fn run_id_unique_per_run() {
         let p = Arc::new(ScriptedProvider::new(standard_script(
             REVIEW_OK, POLISH, DRAFT,
         )));
-        run_chain(root, 1, p).await.expect("run")
+        run_chain(root, 1, p, &Default::default()).await.expect("run")
     }
     let r1 = run(root).await;
     let r2 = run(root).await;
@@ -80,7 +80,7 @@ async fn halted_chain_records_run_status_and_reject_reason() {
     let provider = Arc::new(ScriptedProvider::new(standard_script(
         REVIEW_OK, POLISH, DRAFT,
     )));
-    let report = run_chain(root, 1, provider).await.expect("run");
+    let report = run_chain(root, 1, provider, &Default::default()).await.expect("run");
     assert_eq!(report.status, ChainStatus::Halted);
     assert_eq!(report.reject_reason, Some(RejectReason::MachineCheckFailed));
 
@@ -107,7 +107,7 @@ async fn crash_recovery_does_not_double_commit() {
     let p1 = Arc::new(ScriptedProvider::new(standard_script(
         REVIEW_OK, POLISH, DRAFT,
     )));
-    let r1 = run_chain(root, 1, p1.clone()).await.expect("run1");
+    let r1 = run_chain(root, 1, p1.clone(), &Default::default()).await.expect("run1");
     std::env::remove_var("LINGBI_FAILPOINT");
     assert_eq!(r1.status, ChainStatus::Failed);
     let settlement1 = node(&r1, "settlement");
@@ -123,7 +123,7 @@ async fn crash_recovery_does_not_double_commit() {
     let p2 = Arc::new(ScriptedProvider::new(standard_script(
         REVIEW_OK, POLISH, DRAFT,
     )));
-    let r2 = run_chain(root, 1, p2).await.expect("run2");
+    let r2 = run_chain(root, 1, p2, &Default::default()).await.expect("run2");
     assert_eq!(r2.status, ChainStatus::Completed);
     let s2 = lingbi_book::load_state(root).unwrap();
     assert!(s2.chapters.contains_key("1"));
@@ -143,7 +143,7 @@ async fn side_effect_nodes_carry_idempotency_key() {
     let provider = Arc::new(ScriptedProvider::new(standard_script(
         REVIEW_OK, POLISH, DRAFT,
     )));
-    let report = run_chain(root, 1, provider).await.expect("run");
+    let report = run_chain(root, 1, provider, &Default::default()).await.expect("run");
     for def in ["draft", "settlement"] {
         let n = node(&report, def);
         assert_eq!(n.idempotency_key.as_deref(), Some(n.node_id.as_str()), "{def} 幂等键 = node_id");
@@ -167,13 +167,13 @@ async fn node_recovery_reuses_unchanged_completed_nodes() {
     let failing = Arc::new(
         ScriptedProvider::new(standard_script(REVIEW_OK, POLISH, DRAFT)).fail_on("资深网络小说作家"),
     );
-    let r1 = run_chain(root, 1, failing).await.expect("run1");
+    let r1 = run_chain(root, 1, failing, &Default::default()).await.expect("run1");
     assert_eq!(r1.status, ChainStatus::Failed);
 
     let good = Arc::new(ScriptedProvider::new(standard_script(
         REVIEW_OK, POLISH, DRAFT,
     )));
-    let r2 = run_chain(root, 1, good.clone()).await.expect("run2");
+    let r2 = run_chain(root, 1, good.clone(), &Default::default()).await.expect("run2");
     assert_eq!(r2.status, ChainStatus::Completed);
     for def in ["contract", "brief"] {
         let a = node(&r1, def);
@@ -197,19 +197,15 @@ async fn ratchet_rejection_records_reason() {
     let p1 = Arc::new(ScriptedProvider::new(standard_script(
         REVIEW_OK, POLISH, DRAFT,
     )));
-    let r1 = run_chain(root, 1, p1).await.expect("run1");
+    let r1 = run_chain(root, 1, p1, &Default::default()).await.expect("run1");
     assert_eq!(r1.status, ChainStatus::Completed);
 
     let p2 = Arc::new(ScriptedProvider::new(standard_script(
         REVIEW_OK, POLISH, DRAFT,
     )));
-    let r2 = run_chain(root, 1, p2).await.expect("run2");
+    let r2 = run_chain(root, 1, p2, &Default::default()).await.expect("run2");
     assert_eq!(r2.status, ChainStatus::Failed);
     assert_eq!(r2.reject_reason, Some(RejectReason::RatchetRejected));
     let rec = lingbi_workflow::run::load_run(root, &r2.run_id).unwrap().unwrap();
     assert_eq!(rec.reject_reason, Some(RejectReason::RatchetRejected));
 }
-
-// REVIEW_BLOCKING import 保留供后续票使用（#44 OutputGate）
-#[allow(unused_imports)]
-use common::REVIEW_BLOCKING;

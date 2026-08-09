@@ -725,4 +725,45 @@ describe("LingBi Next desktop shell", () => {
     expect(await screen.findByText("已拒绝")).toBeInTheDocument();
     expect(screen.getByLabelText("编辑器")).toHaveValue("");
   });
+
+  it("换书即清链：打开另一本书清除上次书的链结果与候选 (P11)", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await createBookWithChapter(user);
+
+    // 造陈旧状态：上次书的链已跑完 + 候选仍在
+    act(() => {
+      useAppStore.setState({
+        chainRun: {
+          ch: 1,
+          status: "Completed",
+          run_id: "stale-run",
+          repair_attempts: 0,
+          reject_reason: null,
+          book_input_hash: "x",
+          nodes: [],
+          checks: [],
+          draft_path: null,
+          review_path: null,
+          handoff: null,
+        },
+        chainCurrentNode: "settlement",
+        bookCandidate: { candidate_id: "stale", ch: 1, content: "旧书候选" },
+      });
+    });
+    expect(useAppStore.getState().chainRun).not.toBeNull();
+
+    // 返回首页 → 打开同一本书（store bookOpen 路径）
+    await user.click(screen.getByText("高级功能"));
+    await user.click(screen.getByRole("button", { name: "返回首页" }));
+    await user.click(screen.getByRole("button", { name: /打开已有作品/ }));
+    await user.click(screen.getByText("我的小说"));
+    await screen.findByText("书仓已打开");
+
+    // 链面板/候选回到新书初始态：无上次书残留
+    expect(useAppStore.getState().chainRun).toBeNull();
+    expect(useAppStore.getState().chainCurrentNode).toBeNull();
+    expect(useAppStore.getState().bookCandidate).toBeNull();
+    expect(screen.queryByText("旧书候选")).not.toBeInTheDocument();
+  });
 });

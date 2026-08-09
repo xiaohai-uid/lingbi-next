@@ -9,10 +9,6 @@ use lingbi_workflow::{run_chain, ChainStatus, RejectReason};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-fn node<'a>(report: &'a lingbi_workflow::ChainReport, def: &str) -> &'a lingbi_workflow::node::NodeRecord {
-    report.nodes.iter().find(|n| n.definition_id == def).unwrap()
-}
-
 /// 状态化脚本：第 N 次评审返回 blocking、之后返回 clean（Validate→Repair→Validate）。
 fn stateful_review_script(
     first_n_blocking: usize,
@@ -50,7 +46,7 @@ async fn gate_repair_loop_settles_after_clean_review() {
     init_book(root, true, "第一章", Some("主角踏上修行之路。"));
 
     let provider = Arc::new(ScriptedProvider::new(stateful_review_script(1)));
-    let report = run_chain(root, 1, provider.clone()).await.expect("run");
+    let report = run_chain(root, 1, provider.clone(), &Default::default()).await.expect("run");
     assert_eq!(report.status, ChainStatus::Completed);
     assert_eq!(report.repair_attempts, 1);
     // 复评证据：评审执行了 2 次（draft 1 次 + review 2 次 + polish 改写 1 次）
@@ -71,7 +67,7 @@ async fn persistent_blocking_rejected_after_max_attempts() {
     let provider = Arc::new(ScriptedProvider::new(standard_script(
         REVIEW_BLOCKING, POLISH, DRAFT,
     )));
-    let report = run_chain(root, 1, provider.clone()).await.expect("run");
+    let report = run_chain(root, 1, provider.clone(), &Default::default()).await.expect("run");
     assert_eq!(report.status, ChainStatus::Rejected);
     assert_eq!(report.reject_reason, Some(RejectReason::BlockingIssuesRemain));
     assert_eq!(report.repair_attempts, 2, "max_repair_attempts=2 生效");
@@ -98,7 +94,7 @@ async fn gate_clean_review_no_repair() {
     let provider = Arc::new(ScriptedProvider::new(standard_script(
         REVIEW_OK, POLISH, DRAFT,
     )));
-    let report = run_chain(root, 1, provider.clone()).await.expect("run");
+    let report = run_chain(root, 1, provider.clone(), &Default::default()).await.expect("run");
     assert_eq!(report.status, ChainStatus::Completed);
     assert_eq!(report.repair_attempts, 0);
     assert_eq!(report.reject_reason, None);
@@ -118,7 +114,7 @@ async fn ledger_records_ai_nodes_and_four_level_query() {
     let provider = Arc::new(ScriptedProvider::new(standard_script(
         REVIEW_OK, POLISH, DRAFT,
     )));
-    let report = run_chain(root, 1, provider).await.expect("run");
+    let report = run_chain(root, 1, provider, &Default::default()).await.expect("run");
     assert_eq!(report.status, ChainStatus::Completed);
 
     // draft + review 两行（polish 透传无 AI 消耗不记账）
@@ -157,7 +153,7 @@ async fn ledger_appends_on_repair_and_rerun() {
 
     // 修复循环：draft + review(1) + polish 改写 + review(2) = 4 行
     let p1 = Arc::new(ScriptedProvider::new(stateful_review_script(1)));
-    let r1 = run_chain(root, 1, p1).await.expect("run1");
+    let r1 = run_chain(root, 1, p1, &Default::default()).await.expect("run1");
     assert_eq!(r1.status, ChainStatus::Completed);
     let rows1 = lingbi_workflow::ledger::query_ledger(root, Some(&r1.run_id), None, None, None);
     assert_eq!(rows1.len(), 4, "draft+评审x2+改写");
@@ -165,7 +161,7 @@ async fn ledger_appends_on_repair_and_rerun() {
 
     // 复评/重跑追加（诚实记账）：重跑（settlement 棘轮失败前 draft/review 重跑）
     let p2 = Arc::new(ScriptedProvider::new(stateful_review_script(1)));
-    let r2 = run_chain(root, 1, p2).await.expect("run2");
+    let r2 = run_chain(root, 1, p2, &Default::default()).await.expect("run2");
     let rows2 = lingbi_workflow::ledger::query_ledger(root, Some(&r2.run_id), None, None, None);
     assert!(!rows2.is_empty(), "重跑独立记账");
     let total = lingbi_workflow::ledger::query_ledger(root, None, None, None, None);

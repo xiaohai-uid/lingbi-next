@@ -189,6 +189,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
         chapterHash: "",
         lastSavedChapterContent: "",
         saveState: "idle",
+        // 换书即清链：上次书的链结果/候选不得泄漏到新书（P11 #28 实况）
+        chainRunning: false,
+        chainRunId: null,
+        chainError: null,
+        chainRun: null,
+        chainCurrentNode: null,
+        bookCandidate: null,
         selectedTab: "editor",
         status: "书仓已创建",
       });
@@ -224,6 +231,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
         chapterHash: "",
         lastSavedChapterContent: "",
         saveState: "idle",
+        // 换书即清链：上次书的链结果/候选不得泄漏到新书（P11 #28 实况）
+        chainRunning: false,
+        chainRunId: null,
+        chainError: null,
+        chainRun: null,
+        chainCurrentNode: null,
+        bookCandidate: null,
         selectedTab: "editor",
         status:
           book.recovered > 0 || book.recovery_failed > 0

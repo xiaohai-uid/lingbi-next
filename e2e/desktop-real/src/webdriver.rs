@@ -123,6 +123,37 @@ pub fn click_button(driver: &WebDriver, text: &str) {
     assert_eq!(value.as_str(), Some("ok"), "click button {text}: {value}");
 }
 
+/// 重试式点击（P11 #28）：React 异步重渲染窗口内按钮可能短暂缺席，
+/// 最多重试 3 次（300ms 间隔）。
+pub fn click_button_retry(driver: &WebDriver, text: &str) {
+    let mut last: serde_json::Value = serde_json::Value::Null;
+    for _ in 0..8 {
+        let script = format!(
+            r#"
+        const buttons = Array.from(document.querySelectorAll('button'));
+        const button = buttons.find((item) => item.textContent?.includes({text:?}));
+        if (!button) return 'missing';
+        button.click();
+        return 'ok';
+        "#
+        );
+        last = driver.execute(&script);
+        if last.as_str() == Some("ok") {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    // 失败现场：页面文本 + 全部按钮文本（区分「按钮确实不存在」与
+    // 「文本在非按钮元素上」，P11 #28 诊断）
+    let scene = driver.execute(
+        r#"
+        const buttons = Array.from(document.querySelectorAll('button')).map((item) => item.textContent?.trim());
+        return JSON.stringify({ buttons, body: document.body.innerText.slice(0, 400) });
+        "#,
+    );
+    panic!("click button retry {text} failed: {last}; scene: {scene}");
+}
+
 pub fn wait_for_text(driver: &WebDriver, text: &str, timeout: Duration) {
     let script = format!(
         r#"
@@ -149,6 +180,44 @@ pub fn edit_code_mirror(driver: &WebDriver, text: &str) {
         "#
     );
     wait_until(driver, &script, Duration::from_secs(10), "ok");
+}
+
+/// 追加式写入（P11 #28 迁移书续写）：不覆盖正文，仅把选区折叠到末尾后
+/// 插入——迁移书已有正文不能被整段替换。
+pub fn append_code_mirror(driver: &WebDriver, text: &str) {
+    let text_json = serde_json::to_string(text).expect("json");
+    let script = format!(
+        r#"
+        const content = document.querySelector('.cm-content');
+        if (!content) return 'missing';
+        content.focus();
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(content);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        document.execCommand('insertText', false, {text_json});
+        return document.body.innerText.includes({text_json}) ? 'ok' : 'wait';
+        "#
+    );
+    wait_until(driver, &script, Duration::from_secs(10), "ok");
+}
+
+/// 单次断言页面不包含某文本（P11 #28 换书清链：上次书的链/候选不得泄漏）。
+/// 书仓已打开的状态文本出现时，store 的 set 已同步完成，单次检查即可。
+pub fn assert_text_absent(driver: &WebDriver, text: &str) {
+    let script = format!(
+        r#"
+        return document.body.innerText.includes({text:?}) ? 'present' : 'absent';
+        "#
+    );
+    let value = driver.execute(&script);
+    assert_eq!(
+        value.as_str(),
+        Some("absent"),
+        "stale text still on page: {text}"
+    );
 }
 
 pub fn session_state(driver: &WebDriver) -> Value {

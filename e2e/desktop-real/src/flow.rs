@@ -14,7 +14,8 @@
 
 use crate::platform::{ChildGuard, start_display, tauri_driver_command};
 use crate::webdriver::{
-    book_state, click_button, create_session, edit_code_mirror, wait_for_text,
+    append_code_mirror, assert_text_absent, book_state, click_button, click_button_retry,
+    create_session, edit_code_mirror, wait_for_text,
 };
 use serde_json::Value;
 use std::path::Path;
@@ -109,9 +110,17 @@ fn click_summary(driver: &crate::webdriver::WebDriver, text: &str) {
 }
 
 
-/// SSE chat-completions server（P5-2 恢复）：慢速请求发一个 chunk 后挂起
-/// 30s（测流式与取消）；其它请求流式 E2E候选正文 并结束。
+/// 评审调用计数（P11 #28）：奇数轮返回 blocking、偶数轮 clean——Gate
+/// 返工（Validate→Repair→Validate）在真实 UI 流程可观测。
+static REVIEW_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// SSE chat-completions server（P5-2 恢复 + P11 #28 链路由）：
+/// - 慢速请求发一个 chunk 后挂起 30s（测流式与取消）；
+/// - 含「改写」→ 润色文本（polish 节点）；
+/// - 含「评审」→ 评审 JSON（奇数轮 blocking、偶数轮 clean）；
+/// - 其余 → E2E候选正文（draft 节点 / P5-2 生成）。
 pub fn start_sse_server() -> String {
+    REVIEW_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind sse");
     let port = listener.local_addr().expect("local addr").port();
     std::thread::spawn(move || {
@@ -175,6 +184,38 @@ fn handle_sse(stream: &mut std::net::TcpStream) -> std::io::Result<()> {
         let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(30)));
         let _ = stream.read(&mut hold);
         Ok(())
+    } else if body_text.contains("改写") {
+        // P11 #28 polish 节点：按评审意见改写
+        let body =
+            "data: {\"choices\":[{\"delta\":{\"content\":\"E2E润色稿\"}}]}\n\ndata: [DONE]\n\n";
+        let head = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        write!(stream, "{head}")?;
+        stream.flush()
+    } else if body_text.contains("评审") {
+        // P11 #28 review 节点：奇数轮 blocking、偶数轮 clean（Gate 返工）
+        let call = REVIEW_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let issues = if call % 2 == 0 {
+            r#"[{"severity":"critical","category":"logic","location":"L1","description":"前后矛盾","evidence":"x","fix_hint":"y"}]"#
+        } else {
+            "[]"
+        };
+        let content = format!(r#"{{"issues":{issues}}}"#);
+        // delta content 内嵌 JSON 必须转义引号（否则 provider 解析 InvalidResponse）
+        let escaped = content.replace('\\', "\\\\").replace('"', "\\\"");
+        let body = format!(
+            "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{escaped}\"}}}}]}}\n\ndata: [DONE]\n\n"
+        );
+        let head = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        write!(stream, "{head}")?;
+        stream.flush()
     } else {
         let body =
             "data: {\"choices\":[{\"delta\":{\"content\":\"E2E候选正文\"}}]}\n\ndata: [DONE]\n\n";
@@ -223,6 +264,286 @@ fn assert_contains(value: &str, needle: &str, what: &str) -> Result<(), String> 
     } else {
         Err(format!("{what} missing {needle:?}: {value}"))
     }
+}
+
+/// P11 #28 消费者完整旅程（真实 release 二进制）：
+/// 手写 golden path 精简 → AI 链完整跑通（机检 halt → 补计划 → 续跑 →
+/// 定稿 + Final Revision）→ 第二章 Gate 返工（评审阻塞 → 自动修复 →
+/// 复评通过，repair_attempts=1 证据）→ 导出 → 旧项目迁移 → 重启 0 丢失。
+pub fn consumer_full_scenario(binary: &Path) -> Result<(), String> {
+    let _display = start_display()?;
+    let driver = crate::platform::native_driver();
+    let port = crate::platform::free_port();
+    let native_port = crate::platform::free_port();
+    let mut tauri = tauri_driver_command(&driver, port, native_port);
+    #[cfg(target_os = "linux")]
+    if let Some(display) = _display.display_env() {
+        tauri.env("DISPLAY", display);
+    }
+    let driver_log_path = crate::platform::free_port().to_string() + ".driver.log";
+    let driver_log_path = std::env::temp_dir().join(&driver_log_path);
+    let driver_log_handle = std::fs::File::create(&driver_log_path)
+        .map_err(|error| format!("driver log create: {error}"))?;
+    tauri.stderr(std::process::Stdio::from(driver_log_handle));
+    let driver_process = ChildGuard::new(
+        tauri
+            .spawn()
+            .map_err(|error| format!("tauri-driver spawn failed: {error}"))?,
+    );
+    let base = format!("http://127.0.0.1:{port}");
+    wait_for_driver(&base)?;
+
+    fn log_on_failure(path: &std::path::Path, what: &str) {
+        if let Ok(bytes) = std::fs::read(path)
+            && !bytes.is_empty()
+        {
+            eprintln!("--- tauri-driver stderr ({what}) ---");
+            eprintln!("{}", String::from_utf8_lossy(&bytes));
+        }
+    }
+
+    let sse_url = start_sse_server();
+    let client = reqwest::blocking::Client::new();
+    let self_test = client
+        .post(&sse_url)
+        .json(&serde_json::json!({"messages": [{"role": "user", "content": "hi"}], "stream": true}))
+        .send()
+        .expect("SSE server must serve in-process requests");
+    assert_eq!(self_test.status().as_u16(), 200, "SSE self-test status");
+
+    // 独立书仓根（与 golden_path 区分，避免残留互扰）
+    let root_path = std::env::temp_dir().join("E2E书仓P11");
+    let root = root_path.to_string_lossy().into_owned();
+    let _ = std::fs::remove_dir_all(&root_path);
+
+    // ---- Session 1: 手写 golden path 精简 ----
+    let first = match create_session(&base, binary) {
+        Ok(session) => session,
+        Err(error) => {
+            log_on_failure(&driver_log_path, "first session");
+            return Err(error);
+        }
+    };
+    wait_for_text(&first, "LingBi Next", Duration::from_secs(30));
+    wait_for_text(&first, "开始写作", Duration::from_secs(20));
+    click_button(&first, "开始写作");
+    fill_input(&first, "作品名", "P11旅程书");
+    click_summary(&first, "高级选项");
+    fill_input(&first, "自定义保存位置", &root);
+    click_button(&first, "创建项目");
+    wait_for_text(&first, "书仓已创建", Duration::from_secs(30));
+    wait_for_text(&first, "保存", Duration::from_secs(20));
+    fill_input(&first, "新章节标题", "第一章");
+    click_button(&first, "新建章节");
+    wait_for_text(&first, "第一章", Duration::from_secs(20));
+    edit_code_mirror(&first, "手写正文：旧车站的灯还亮着。");
+    click_button(&first, "保存");
+    wait_for_text(&first, "已保存", Duration::from_secs(20));
+
+    // ---- 配置 AI（SSE 路由版：评审/改写/正文）----
+    click_summary(&first, "高级功能");
+    click_button(&first, "返回首页");
+    wait_for_text(&first, "连接 AI", Duration::from_secs(20));
+    click_button(&first, "连接 AI");
+    wait_for_text(&first, "选择 AI 服务", Duration::from_secs(20));
+    fill_input(&first, "API Key", "fake");
+    click_summary(&first, "高级设置");
+    fill_input(&first, "自定义 Base URL", &sse_url);
+    fill_input(&first, "自定义模型 ID", "e2e");
+    click_button(&first, "保存设置");
+    wait_for_text(&first, "AI 设置已保存", Duration::from_secs(20));
+    let health = invoke(&first, "provider_test", serde_json::json!({}));
+    assert_eq!(health["ok"].as_bool(), Some(true), "provider_test: {health}");
+    // 显式返回欢迎首页（AI 配置视图停留；确定性导航）
+    click_button(&first, "返回");
+    wait_for_text(&first, "开始写作", Duration::from_secs(20));
+
+    // ---- 打开第一章 → 运行链：fresh 章（无 summary）→ 机检 halt ----
+    click_button(&first, "打开已有作品");
+    wait_for_text(&first, "最近作品", Duration::from_secs(20));
+    click_summary(&first, "高级选项");
+    fill_input(&first, "项目路径", &root);
+    click_button(&first, "打开");
+    wait_for_text(&first, "书仓已打开", Duration::from_secs(30));
+    wait_for_text(&first, "第一章", Duration::from_secs(20));
+    click_button_retry(&first, "第一章");
+    wait_for_text(&first, "手写正文：旧车站的灯还亮着。", Duration::from_secs(20));
+
+    click_button(&first, "运行本章工作流");
+    // 机检 halt：摘要为空 → 检查和优化步骤失败文案
+    wait_for_any_text(
+        &first,
+        &["机检未过", "summary 为空", "状态门禁未过"],
+        Duration::from_secs(60),
+    );
+
+    // 补章计划（Book V3 = 目录树即项目）：frontmatter + summary
+    let ch1_path = root_path.join("定稿/正文/001-第一章.md");
+    let plan = "---\ntitle: 第一章\nchapter: 001\nvolume: 1\nwords: 0\nstatus: 草稿\nsummary: 主角在旧车站发现一盏不灭的灯。\n---\n\n";
+    std::fs::write(&ch1_path, plan)
+        .map_err(|error| format!("write plan: {error}"))?;
+
+    // 重跑 → 链完成（评审首轮 blocking → 自动返工 → 复评通过）
+    click_button(&first, "运行本章工作流");
+    wait_for_text(&first, "已确认：定稿/正文/001-第一章.md", Duration::from_secs(120));
+    wait_for_text(&first, "准备本章 ✔", Duration::from_secs(20));
+    wait_for_text(&first, "确认本章 ✔", Duration::from_secs(20));
+
+    // 磁盘证据：定稿 = 润色稿（Gate 返工输出）+ Final Revision 快照
+    let settled1 = std::fs::read_to_string(&ch1_path)
+        .map_err(|error| format!("read settled ch1: {error}"))?;
+    assert_contains(&settled1, "E2E润色稿", "ch1 settled body (polish output)")?;
+    let versions_dir = root_path.join(".lingbi/versions");
+    if !versions_dir.is_dir() {
+        return Err("Final Revision dir missing after chain settle".to_owned());
+    }
+    let version_count = std::fs::read_dir(&versions_dir)
+        .map_err(|error| format!("versions dir: {error}"))?
+        .count();
+    if version_count < 1 {
+        return Err(format!("Final Revision snapshots missing: {version_count}"));
+    }
+
+    // ---- 第二章：AI 生成 → 取消 → 重试 → 链（Gate 返工）→ 导出 ----
+    fill_input(&first, "新章节标题", "第二章");
+    click_button(&first, "新建章节");
+    wait_for_text(&first, "第二章", Duration::from_secs(20));
+    // 生成 → 取消（慢速挂起）→ 重试（正常流式）
+    fill_input(&first, "写作要求", "慢速生成测试");
+    click_button(&first, "生成");
+    wait_for_text(&first, "第一部分", Duration::from_secs(30));
+    click_button(&first, "取消");
+    wait_for_text(&first, "生成", Duration::from_secs(20));
+    fill_input(&first, "写作要求", "生成第二章正文");
+    click_button(&first, "生成");
+    wait_for_text(&first, "E2E候选正文", Duration::from_secs(30));
+
+    // 补第二章计划
+    let ch2_path = root_path.join("定稿/正文/002-第二章.md");
+    let plan2 = "---\ntitle: 第二章\nchapter: 002\nvolume: 1\nwords: 0\nstatus: 草稿\nsummary: 主角循着灯光走进地下通道。\n---\n\n";
+    std::fs::write(&ch2_path, plan2)
+        .map_err(|error| format!("write plan2: {error}"))?;
+
+    // 运行链：review 第二轮（奇数）blocking → 返工 → 复评 clean
+    click_button(&first, "运行本章工作流");
+    wait_for_text(&first, "已确认：定稿/正文/002-第二章.md", Duration::from_secs(120));
+    let settled2 = std::fs::read_to_string(&ch2_path)
+        .map_err(|error| format!("read settled ch2: {error}"))?;
+    assert_contains(&settled2, "E2E润色稿", "ch2 settled body (polish output)")?;
+
+    // Gate 返工证据：两次运行 run 台账 repair_attempts=1
+    let runs_dir = root_path.join("工作区/工作流/runs");
+    let runs: Vec<_> = std::fs::read_dir(&runs_dir)
+        .map_err(|error| format!("runs dir: {error}"))?
+        .filter_map(|entry| entry.ok())
+        .collect();
+    let mut repaired = 0usize;
+    for entry in runs {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        if let Ok(bytes) = std::fs::read(&path) {
+            if let Ok(record) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                if record["status"].as_str() == Some("Completed")
+                    && record["repair_attempts"].as_u64() == Some(1)
+                {
+                    repaired += 1;
+                }
+            }
+        }
+    }
+    if repaired < 2 {
+        return Err(format!(
+            "Gate repair evidence missing: expected >=2 runs with repair_attempts=1, got {repaired}"
+        ));
+    }
+
+    // 导出
+    click_button(&first, "导出 DOCX");
+    click_button(&first, "导出 MD");
+    std::thread::sleep(Duration::from_millis(1500));
+    for ext in ["md", "docx"] {
+        let path = root_path.join(format!("export/002-第二章.{ext}"));
+        if !path.exists() {
+            return Err(format!("export file missing: {}", path.display()));
+        }
+    }
+
+    // ---- 旧项目一键迁移：legacy fixture → migrate_book → 打开 → 继续写 ----
+    let fixture = crate::repo_root().join("fixtures/storyrepo-oracle/153eb63/steps/000-initial/book");
+    if !fixture.is_dir() {
+        return Err(format!("legacy fixture missing: {}", fixture.display()));
+    }
+    let mig_path = std::env::temp_dir().join("E2E迁移书P11");
+    let mig_root = mig_path.to_string_lossy().into_owned();
+    let _ = std::fs::remove_dir_all(&mig_path);
+    let receipt = invoke(
+        &first,
+        "migrate_book",
+        serde_json::json!({
+            "source": fixture.to_string_lossy(),
+            "destination": mig_root,
+        }),
+    );
+    assert_eq!(receipt["classification"].as_str(), Some("storyrepo-legacy"), "receipt: {receipt}");
+    // UI 打开迁移书 → 继续写（legacy fixture 章节题为「开局」，非「第一章」）
+    click_summary(&first, "高级功能");
+    click_button(&first, "返回首页");
+    wait_for_text(&first, "打开已有作品", Duration::from_secs(20));
+    click_button(&first, "打开已有作品");
+    wait_for_text(&first, "最近作品", Duration::from_secs(20));
+    click_summary(&first, "高级选项");
+    fill_input(&first, "项目路径", &mig_root);
+    click_button(&first, "打开");
+    wait_for_text(&first, "书仓已打开", Duration::from_secs(30));
+    // 换书清链：上次书（P11旅程书）的链结果与候选不得泄漏进迁移书视图
+    assert_text_absent(&first, "已确认：定稿");
+    assert_text_absent(&first, "候选内容");
+    click_button_retry(&first, "开局");
+    wait_for_text(&first, "夜色如墨", Duration::from_secs(20));
+    append_code_mirror(&first, "迁移后续写：灯芯又亮了一分。");
+    click_button(&first, "保存");
+    wait_for_text(&first, "已保存", Duration::from_secs(20));
+    // 磁盘证据：迁移书正文保留原字节 + 追加句落盘；事务层就位（继续写=托管写）
+    let mig_body = std::fs::read_to_string(mig_path.join("定稿/正文/001-开局.md"))
+        .map_err(|error| format!("read migrated chapter: {error}"))?;
+    assert_contains(&mig_body, "夜色如墨", "migrated body preserved")?;
+    assert_contains(&mig_body, "灯芯又亮了一分", "migrated continue-write saved")?;
+    if !mig_path.join(".lingbi/transactions").is_dir() {
+        return Err("tx layer missing after migrated-book save".to_owned());
+    }
+
+    // ---- Session 2: 重启 0 丢失 ----
+    first.delete();
+    let second = match create_session(&base, binary) {
+        Ok(session) => session,
+        Err(error) => {
+            log_on_failure(&driver_log_path, "second session");
+            return Err(error);
+        }
+    };
+    wait_for_text(&second, "LingBi Next", Duration::from_secs(30));
+    click_button(&second, "打开已有作品");
+    wait_for_text(&second, "最近作品", Duration::from_secs(20));
+    click_summary(&second, "高级选项");
+    fill_input(&second, "项目路径", &root);
+    click_button(&second, "打开");
+    wait_for_text(&second, "书仓已打开", Duration::from_secs(30));
+    // 第一章/第二章内容完好（链定稿字节 + 0 丢失）
+    click_button_retry(&second, "第一章");
+    wait_for_text(&second, "E2E润色稿", Duration::from_secs(20));
+    click_button_retry(&second, "第二章");
+    wait_for_text(&second, "E2E润色稿", Duration::from_secs(20));
+    // 导出文件仍在磁盘
+    for ext in ["md", "docx"] {
+        if !root_path.join(format!("export/002-第二章.{ext}")).exists() {
+            return Err(format!("export lost after restart: {ext}"));
+        }
+    }
+    second.delete();
+    drop(driver_process);
+    Ok(())
 }
 
 /// The complete novice golden path on Book V3 (P5-1): launch → create book

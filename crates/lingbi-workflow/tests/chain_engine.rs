@@ -31,7 +31,7 @@ async fn dbg_node_count() {
     let root = dir.path();
     init_book(root, true, "第一章", Some("主角踏上修行之路。"));
     let p = Arc::new(ScriptedProvider::new(standard_script(REVIEW_OK, POLISH, DRAFT)));
-    let report = run_chain(root, 1, p).await.expect("run");
+    let report = run_chain(root, 1, p, &Default::default()).await.expect("run");
     eprintln!("status={:?}", report.status);
     for n in &report.nodes {
         eprintln!("{} {:?} note={:?} err={:?}", n.definition_id, n.status, n.note, n.error);
@@ -47,7 +47,7 @@ async fn full_chain_completes_and_settles_managed() {
     let provider = Arc::new(ScriptedProvider::new(standard_script(
         REVIEW_OK, POLISH, DRAFT,
     )));
-    let report = run_chain(root, 1, provider.clone()).await.expect("run");
+    let report = run_chain(root, 1, provider.clone(), &Default::default()).await.expect("run");
     completed(&report);
 
     // 定稿正文 = 最终草稿（无阻塞 → polish 透传 → DRAFT）
@@ -78,7 +78,7 @@ async fn full_chain_completes_on_legacy_book() {
     let provider = Arc::new(ScriptedProvider::new(standard_script(
         REVIEW_OK, POLISH, DRAFT,
     )));
-    let report = run_chain(root, 1, provider).await.expect("run");
+    let report = run_chain(root, 1, provider, &Default::default()).await.expect("run");
     completed(&report);
     // legacy 首次结算即托管化（与 P5-4 采纳纪律一致）
     assert!(root.join(".lingbi").is_dir());
@@ -104,13 +104,13 @@ async fn hashes_recorded_and_deterministic_across_identical_books() {
         let p = Arc::new(ScriptedProvider::new(standard_script(
             REVIEW_OK, POLISH, DRAFT,
         )));
-        run_chain(&d1, 1, p).await.expect("run1")
+        run_chain(&d1, 1, p, &Default::default()).await.expect("run1")
     };
     let r2 = {
         let p = Arc::new(ScriptedProvider::new(standard_script(
             REVIEW_OK, POLISH, DRAFT,
         )));
-        run_chain(&d2, 1, p).await.expect("run2")
+        run_chain(&d2, 1, p, &Default::default()).await.expect("run2")
     };
     // input 确定性：contract 是唯一不继承路径相关上游的节点（input 由书仓
     // 上下文指纹 + 章文件构成，与位置无关）；下游 input 经 upstream output_hash
@@ -159,7 +159,7 @@ async fn resume_after_draft_failure_reuses_contract_and_brief() {
     let failing = Arc::new(
         ScriptedProvider::new(standard_script(REVIEW_OK, POLISH, DRAFT)).fail_on("资深网络小说作家"),
     );
-    let report = run_chain(root, 1, failing).await.expect("run1");
+    let report = run_chain(root, 1, failing, &Default::default()).await.expect("run1");
     assert_eq!(report.status, ChainStatus::Failed);
     let draft = report.nodes.iter().find(|n| n.definition_id == "draft").unwrap();
     assert_eq!(format!("{:?}", draft.status), "Failed");
@@ -170,7 +170,7 @@ async fn resume_after_draft_failure_reuses_contract_and_brief() {
     let good = Arc::new(ScriptedProvider::new(standard_script(
         REVIEW_OK, POLISH, DRAFT,
     )));
-    let report2 = run_chain(root, 1, good.clone()).await.expect("run2");
+    let report2 = run_chain(root, 1, good.clone(), &Default::default()).await.expect("run2");
     completed(&report2);
     for def in ["contract", "brief"] {
         let a = report.nodes.iter().find(|n| n.definition_id == def).unwrap();
@@ -195,14 +195,14 @@ async fn outline_change_invalidates_whole_chain() {
     init_book(root, true, "第一章", Some("主角踏上修行之路。"));
 
     let p = Arc::new(ScriptedProvider::new(standard_script(REVIEW_OK, POLISH, DRAFT)));
-    let _ = run_chain(root, 1, p.clone()).await.expect("run1"); // 首跑建立 checkpoint
+    let _ = run_chain(root, 1, p.clone(), &Default::default()).await.expect("run1"); // 首跑建立 checkpoint
     // 机检 halt 场景：把章计划破坏（摘要清空）→ 链 halt
     std::fs::write(
         root.join("定稿/正文/001-第一章.md"),
         "---\ntitle: 第一章\nchapter: 001\nvolume: 1\nwords: 0\nstatus: 草稿\n---\n\n",
     )
     .unwrap();
-    let r2 = run_chain(root, 1, p.clone()).await.expect("run2");
+    let r2 = run_chain(root, 1, p.clone(), &Default::default()).await.expect("run2");
     assert_eq!(r2.status, ChainStatus::Halted, "摘要空 → 机检 halt");
     assert!(r2.nodes.iter().any(|n| n.definition_id == "machine-check" && n.status == Status::Completed));
     // 下游旧记录保留但已失效（output_hash 清空，绝不复用）
@@ -215,7 +215,7 @@ async fn outline_change_invalidates_whole_chain() {
     // 改大纲（书仓上下文指纹变化）→ 全链失效重跑
     std::fs::write(root.join("大纲/章纲.md"), "# 第一章\n\n主角入宗门修行。\n").unwrap();
     let p3 = Arc::new(ScriptedProvider::new(standard_script(REVIEW_OK, POLISH, DRAFT)));
-    let r3 = run_chain(root, 1, p3).await.expect("run3");
+    let r3 = run_chain(root, 1, p3, &Default::default()).await.expect("run3");
     for (a, b) in r2.nodes.iter().zip(r3.nodes.iter()) {
         assert_eq!(a.definition_id, b.definition_id);
         if a.status == Status::Completed && b.status == Status::Completed {
@@ -235,7 +235,7 @@ async fn model_switch_invalidates_ai_nodes_only() {
     let p1 = Arc::new(
         ScriptedProvider::new(standard_script(REVIEW_OK, POLISH, DRAFT)).fail_on("请评审以下草稿"),
     );
-    let r1 = run_chain(root, 1, p1).await.expect("run1");
+    let r1 = run_chain(root, 1, p1, &Default::default()).await.expect("run1");
     assert_eq!(r1.status, ChainStatus::Failed);
     let draft1 = r1.nodes.iter().find(|n| n.definition_id == "draft").unwrap();
     let contract1 = r1.nodes.iter().find(|n| n.definition_id == "contract").unwrap();
@@ -248,7 +248,7 @@ async fn model_switch_invalidates_ai_nodes_only() {
             .with_ids("scripted", "model-2")
             .fail_on("请评审以下草稿"),
     );
-    let r2 = run_chain(root, 1, p2.clone()).await.expect("run2");
+    let r2 = run_chain(root, 1, p2.clone(), &Default::default()).await.expect("run2");
     assert_eq!(r2.status, ChainStatus::Failed);
     let draft2 = r2.nodes.iter().find(|n| n.definition_id == "draft").unwrap();
     assert_ne!(draft1.node_id, draft2.node_id, "模型切换 → draft 失效重跑");
@@ -259,7 +259,7 @@ async fn model_switch_invalidates_ai_nodes_only() {
     // run3：切回模型 A → 与 run1 同快照（input_hash 相等），但记录已被 run2
     // 替换 → draft 重新执行；contract/brief 全程复用（checkpoint 可续）
     let p3 = Arc::new(ScriptedProvider::new(standard_script(REVIEW_OK, POLISH, DRAFT)));
-    let r3 = run_chain(root, 1, p3.clone()).await.expect("run3");
+    let r3 = run_chain(root, 1, p3.clone(), &Default::default()).await.expect("run3");
     completed(&r3);
     let draft3 = r3.nodes.iter().find(|n| n.definition_id == "draft").unwrap();
     assert_ne!(draft2.node_id, draft3.node_id, "模型与 run2 不同 → 重新执行");
@@ -282,7 +282,7 @@ async fn machine_check_halt_on_empty_summary_then_resume_after_plan_fix() {
     init_book(root, true, "第一章", None);
 
     let p = Arc::new(ScriptedProvider::new(standard_script(REVIEW_OK, POLISH, DRAFT)));
-    let r1 = run_chain(root, 1, p.clone()).await.expect("run1");
+    let r1 = run_chain(root, 1, p.clone(), &Default::default()).await.expect("run1");
     assert_eq!(r1.status, ChainStatus::Halted);
     assert!(r1.checks.iter().any(|c| !c.ok), "机检有失败项");
     assert!(
@@ -303,7 +303,7 @@ async fn machine_check_halt_on_empty_summary_then_resume_after_plan_fix() {
     )
     .unwrap();
     let p2 = Arc::new(ScriptedProvider::new(standard_script(REVIEW_OK, POLISH, DRAFT)));
-    let r2 = run_chain(root, 1, p2).await.expect("run2");
+    let r2 = run_chain(root, 1, p2, &Default::default()).await.expect("run2");
     completed(&r2);
     assert!(
         std::fs::read_to_string(root.join("定稿/正文/001-第一章.md"))
@@ -336,7 +336,7 @@ async fn blocking_review_repair_loop_then_settles() {
         }
     };
     let provider = Arc::new(ScriptedProvider::new(script));
-    let report = run_chain(root, 1, provider.clone()).await.expect("run");
+    let report = run_chain(root, 1, provider.clone(), &Default::default()).await.expect("run");
     completed(&report);
     assert_eq!(report.repair_attempts, 1, "一次修复后复评通过");
     // 修复证据：repair_attempts=1 + 定稿 = 润色改写文本（最终 polish 记录
@@ -359,7 +359,7 @@ async fn clean_review_polish_passthrough_without_ai() {
     let provider = Arc::new(ScriptedProvider::new(standard_script(
         REVIEW_OK, POLISH, DRAFT,
     )));
-    let report = run_chain(root, 1, provider).await.expect("run");
+    let report = run_chain(root, 1, provider, &Default::default()).await.expect("run");
     completed(&report);
     let polish = report.nodes.iter().find(|n| n.definition_id == "polish").unwrap();
     assert_eq!(polish.note.as_deref(), Some("无阻塞问题，跳过改写"));
@@ -382,7 +382,7 @@ async fn invalid_review_json_fails_review_node() {
         }
     };
     let provider = Arc::new(ScriptedProvider::new(script));
-    let report = run_chain(root, 1, provider).await.expect("run");
+    let report = run_chain(root, 1, provider, &Default::default()).await.expect("run");
     assert_eq!(report.status, ChainStatus::Failed);
     let review = report.nodes.iter().find(|n| n.definition_id == "review").unwrap();
     assert_eq!(format!("{:?}", review.status), "Failed");
@@ -400,12 +400,12 @@ async fn ratchet_rejects_second_settlement_keeping_chapter_bytes() {
     init_book(root, true, "第一章", Some("主角踏上修行之路。"));
 
     let p1 = Arc::new(ScriptedProvider::new(standard_script(REVIEW_OK, POLISH, DRAFT)));
-    let r1 = run_chain(root, 1, p1).await.expect("run1");
+    let r1 = run_chain(root, 1, p1, &Default::default()).await.expect("run1");
     completed(&r1);
     let settled1 = std::fs::read(root.join("定稿/正文/001-第一章.md")).unwrap();
 
     let p2 = Arc::new(ScriptedProvider::new(standard_script(REVIEW_OK, POLISH, DRAFT)));
-    let r2 = run_chain(root, 1, p2).await.expect("run2");
+    let r2 = run_chain(root, 1, p2, &Default::default()).await.expect("run2");
     assert_eq!(r2.status, ChainStatus::Failed);
     let settlement = r2.nodes.iter().find(|n| n.definition_id == "settlement").unwrap();
     assert_eq!(format!("{:?}", settlement.status), "Failed");
@@ -424,7 +424,7 @@ async fn draft_redline_hits_recorded_without_halting() {
     let provider = Arc::new(ScriptedProvider::new(standard_script(
         REVIEW_OK, POLISH, redline_draft,
     )));
-    let report = run_chain(root, 1, provider).await.expect("run");
+    let report = run_chain(root, 1, provider, &Default::default()).await.expect("run");
     completed(&report);
     let mc = report.nodes.iter().find(|n| n.definition_id == "machine-check").unwrap();
     let note = mc.note.as_deref().unwrap();
@@ -447,7 +447,7 @@ async fn handoff_report_carries_title_words_and_chain_summary() {
     let provider = Arc::new(ScriptedProvider::new(standard_script(
         REVIEW_OK, POLISH, DRAFT,
     )));
-    let report = run_chain(root, 1, provider).await.expect("run");
+    let report = run_chain(root, 1, provider, &Default::default()).await.expect("run");
     let handoff = report.handoff.expect("handoff");
     assert_eq!(handoff.ch, 1);
     assert_eq!(handoff.title, "第一章");
