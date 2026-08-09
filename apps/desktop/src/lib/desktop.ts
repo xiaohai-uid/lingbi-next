@@ -953,6 +953,18 @@ export const desktop = {
     }
   },
 
+  /// P10 #27 可选 Git 快照（应用内执行；mock 返回降级消息）。
+  async gitSnapshot(): Promise<{ available: boolean; committed: boolean; message: string }> {
+    if (inTauri()) {
+      return invoke("book_git_snapshot");
+    }
+    return {
+      available: true,
+      committed: false,
+      message: "书仓非 git 仓库（可选集成未启用）",
+    };
+  },
+
   async getChainStatus(runId: string): Promise<ChainStatus> {
     if (inTauri()) {
       return invoke<ChainStatus>("get_chain_status", { runId });

@@ -85,6 +85,9 @@ interface AppStore {
   chainStart: () => Promise<void>;
   chainCancel: () => Promise<void>;
   chainReset: () => void;
+  // P10 #27 可选 Git 快照
+  gitSnapshotMsg: string | null;
+  gitSnapshot: () => Promise<void>;
   chapterCreate: (title: string) => Promise<void>;
   chapterOpen: (ch: number) => Promise<void>;
   chapterSave: () => Promise<void>;
@@ -496,6 +499,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
       chainRun: null,
       chainCurrentNode: null,
     });
+  },
+  gitSnapshotMsg: null,
+  async gitSnapshot() {
+    try {
+      const result = await desktop.gitSnapshot();
+      set({ gitSnapshotMsg: result.message });
+    } catch (error) {
+      setError(set, error);
+    }
   },
 
   // P5-5 声明式技巧卡：只读静态数据，加载一次即可（不随章清空）。

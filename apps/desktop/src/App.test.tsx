@@ -661,6 +661,27 @@ describe("LingBi Next desktop shell", () => {
     spy.mockRestore();
   });
 
+  it("git snapshot button degrades gracefully (P10)", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await createBookWithChapter(user);
+    // mock 返回非仓库降级消息
+    const desktop = (await import("./lib/desktop")).desktop;
+    const spy = vi
+      .spyOn(desktop, "gitSnapshot")
+      .mockResolvedValue({
+        available: true,
+        committed: false,
+        message: "书仓非 git 仓库（可选集成未启用）",
+      });
+    await user.click(screen.getByText("高级功能"));
+    await user.click(screen.getByRole("button", { name: "Git 快照" }));
+    expect(
+      await screen.findByText("书仓非 git 仓库（可选集成未启用）"),
+    ).toBeInTheDocument();
+    spy.mockRestore();
+  });
+
   it("shows friendly error when no API key and keeps editor usable (P9)", async () => {
     const user = userEvent.setup();
     render(<App />);

@@ -237,6 +237,17 @@ pub struct ExportResultDto {
     pub path: String,
 }
 
+/// P10 #27 Git 快照结果（可选集成：优雅降级，永不 Err）。
+#[derive(Debug, Clone, Serialize)]
+pub struct GitSnapshotDto {
+    /// 系统 git 是否可用。
+    pub available: bool,
+    /// 是否已提交。
+    pub committed: bool,
+    /// 结果消息（降级说明 / 提交短哈希 / git 输出）。
+    pub message: String,
+}
+
 /// P6 迁移回执 DTO（六字段，对应 lingbi-migration::MigrationReceipt）。
 #[derive(Debug, Clone, Serialize)]
 pub struct MigrationReceiptDto {
@@ -755,6 +766,85 @@ pub fn export_chapter(root: &str, ch: i64, format: &str) -> Result<ExportResultD
 /// plan → execute → validate），source 只读、正文 byte-for-byte，返回
 /// 六字段回执（同时落 `.lingbi/migration-receipt.json`）。支持
 /// storyrepo-legacy 与 flutter-v1 两类源。
+/// 可选 Git 快照（P10 #27）：书仓为 git 仓库时 `git add -A` + 提交
+/// `lingbi: {book} rev {revision}`；非仓库/无 git → 优雅降级 DTO（绝不
+/// 返回 Err——可选能力永不阻断写作）。应用内部执行（std::process::Command
+/// 单值参数无 shell），用户不操作 CLI。
+pub fn git_snapshot(root: &str) -> Result<GitSnapshotDto, CommandError> {
+    let book = Path::new(root)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "书".to_owned());
+    // 1. git 可用性
+    let available = std::process::Command::new("git")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !available {
+        return Ok(GitSnapshotDto {
+            available: false,
+            committed: false,
+            message: "Git 不可用（可选集成未启用；数据安全由 .lingbi 事务层保障）".to_owned(),
+        });
+    }
+    // 2. 是否 git 仓库
+    let in_repo = std::process::Command::new("git")
+        .arg("rev-parse")
+        .arg("--is-inside-work-tree")
+        .current_dir(root)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !in_repo {
+        return Ok(GitSnapshotDto {
+            available: true,
+            committed: false,
+            message: "书仓非 git 仓库（可选集成未启用）".to_owned(),
+        });
+    }
+    // 3. add + commit（cwd = 书仓根，参数单值）
+    let revision = load_state(Path::new(root))
+        .map(|s| s.state_revision)
+        .unwrap_or(0);
+    let run = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .map_err(|e| {
+                CommandError::new("GIT_SNAPSHOT_FAILED", format!("git 执行失败: {e}"), false)
+            })
+    };
+    run(&["add", "-A"])?;
+    let commit_msg = format!("lingbi: {book} rev {revision}");
+    let commit = run(&["commit", "-m", &commit_msg])?;
+    if !commit.status.success() {
+        return Ok(GitSnapshotDto {
+            available: true,
+            committed: false,
+            message: format!(
+                "提交未产生变更: {}",
+                String::from_utf8_lossy(&commit.stderr).trim()
+            ),
+        });
+    }
+    let short = run(&["rev-parse", "--short", "HEAD"])?;
+    Ok(GitSnapshotDto {
+        available: true,
+        committed: true,
+        message: format!(
+            "已提交 {}（{}）",
+            String::from_utf8_lossy(&short.stdout).trim(),
+            commit_msg
+        ),
+    })
+}
+
 pub fn migrate_book(source: &str, destination: &str) -> Result<MigrationReceiptDto, CommandError> {
     let receipt = lingbi_migration::migrate_book(Path::new(source), Path::new(destination))
         .map_err(CommandError::from)?;
@@ -1297,6 +1387,52 @@ mod tests {
         assert_eq!(draft.provider.as_deref(), Some("scripted"));
         assert!(run.handoff.is_some());
         assert!(root.join("定稿/正文/001-第一章.md").exists());
+    }
+
+    #[test]
+    fn git_snapshot_commits_in_repo_and_degrades_outside() {
+        // 非仓库：优雅降级（不 Err）
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        lingbi_workflow::testing::init_book(dir.path(), true, "第一章", Some("主角踏上修行之路。"));
+        let out = git_snapshot(&dir.path().to_string_lossy()).expect("snapshot");
+        assert!(out.available, "本机有 git");
+        assert!(!out.committed);
+        assert!(out.message.contains("非 git 仓库"), "{}", out.message);
+
+        // 仓库内：提交成功（git log 断言）
+        let repo = tempfile::TempDir::new().expect("tempdir");
+        let repo_path = repo.path().to_string_lossy().into_owned();
+        std::process::Command::new("git")
+            .args(["init", "-q", &repo_path])
+            .status()
+            .expect("git init");
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@lingbi.local"])
+            .current_dir(&repo_path)
+            .status()
+            .expect("config email");
+        std::process::Command::new("git")
+            .args(["config", "user.name", "lingbi-test"])
+            .current_dir(&repo_path)
+            .status()
+            .expect("config name");
+        std::process::Command::new("git")
+            .args(["commit", "-q", "--allow-empty", "-m", "init"])
+            .current_dir(&repo_path)
+            .status()
+            .expect("init commit");
+        lingbi_workflow::testing::init_book(Path::new(&repo_path), true, "第一章", Some("主角踏上修行之路。"));
+        let out = git_snapshot(&repo_path).expect("snapshot repo");
+        assert!(out.available);
+        assert!(out.committed, "{}", out.message);
+        assert!(out.message.contains("已提交"), "{}", out.message);
+        let log = std::process::Command::new("git")
+            .args(["log", "--oneline", "-2"])
+            .current_dir(&repo_path)
+            .output()
+            .expect("git log");
+        let log_text = String::from_utf8_lossy(&log.stdout);
+        assert!(log_text.contains("lingbi:"), "提交消息含 lingbi 标记: {log_text}");
     }
 
     #[test]

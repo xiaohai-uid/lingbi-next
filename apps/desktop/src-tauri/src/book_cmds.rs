@@ -499,6 +499,16 @@ pub fn resume_workflow(state: State<'_, DesktopState>) -> Result<String, Command
     lingbi_commands::resume_workflow(&root).map_err(CommandErrorDto::from)
 }
 
+/// 可选 Git 快照（P10 #27）：应用内部执行 git add+commit（书仓为仓库时）；
+/// 非仓库/无 git → 优雅降级消息。不阻断任何写作路径。
+#[tauri::command]
+pub fn book_git_snapshot(
+    state: State<'_, DesktopState>,
+) -> Result<lingbi_commands::GitSnapshotDto, CommandErrorDto> {
+    let root = book_root(&state)?;
+    lingbi_commands::git_snapshot(&root).map_err(CommandErrorDto::from)
+}
+
 /// 导出章节（P5-4）：md/txt/docx 到 书仓 export/ 目录。
 #[tauri::command]
 pub fn export_chapter(

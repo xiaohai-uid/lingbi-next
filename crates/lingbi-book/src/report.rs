@@ -136,6 +136,8 @@ pub fn author_report(root: &Path, stage: &str, ch: Option<i64>) -> Result<String
         nexts.push(format!("第{target}章存在 blocking:定点修复后进润色,勿重跑评审"));
     }
     if stage == "postcommit" && nexts.is_empty() {
+        // 引擎字节锁定文本（P10 #27：仅建议文案，非功能依赖——应用运行时
+        // 零 git 调用，干净 Windows 无 Git 全功能正常）
         nexts.push("本批次可结转:git add -A && git commit(或先重建派生视图)".to_owned());
     }
     if nexts.is_empty() {

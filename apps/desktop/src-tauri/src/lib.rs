@@ -947,6 +947,7 @@ pub fn run() {
             book_cmds::create_candidate,
             book_cmds::adopt_candidate,
             book_cmds::reject_candidate,
+            book_cmds::book_git_snapshot,
             book_cmds::start_chain,
             book_cmds::cancel_chain,
             book_cmds::get_chain_status,

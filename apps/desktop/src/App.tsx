@@ -537,6 +537,18 @@ function SaveStatus() {
 }
 
 /// Book V3 编辑器（P5-1：建章/读章/存章/保存状态；AI 面随 P5-2 接入）。
+/// P10 #27 可选 Git 快照（应用内执行；非仓库/无 git 优雅降级消息）。
+function GitSnapshotButton() {
+  const gitSnapshotMsg = useAppStore((state) => state.gitSnapshotMsg);
+  const gitSnapshot = useAppStore((state) => state.gitSnapshot);
+  return (
+    <div className="git-snapshot">
+      <button onClick={() => void gitSnapshot()}>Git 快照</button>
+      {gitSnapshotMsg ? <p className="hint">{gitSnapshotMsg}</p> : null}
+    </div>
+  );
+}
+
 /// P9 #26 本章工作流面板：4 步模式默认（准备本章→AI 写作→检查和优化→
 /// 确认本章），高级模式显式切换展示 8 节点；内部机制（哈希/账本）仅高级
 /// 折叠展示。错误只出现在本面板（黄金路径无条件成立）。
@@ -802,6 +814,7 @@ function BookEditor() {
           <button onClick={() => useAppStore.setState({ selectedTab: "welcome" })}>
             返回首页
           </button>
+          <GitSnapshotButton />
         </details>
       </aside>
       <aside className="tools">
@@ -1051,6 +1064,7 @@ function Editor() {
           <button onClick={() => useAppStore.setState({ selectedTab: "welcome" })}>
             返回首页
           </button>
+          <GitSnapshotButton />
         </details>
       </aside>
 
