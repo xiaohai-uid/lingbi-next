@@ -38,8 +38,13 @@ pub fn is_ai_node(def_id: &str) -> bool {
 }
 
 /// 节点实现版本（定义语义变更时递增，进入 input_hash）。
-pub fn definition_version(_def_id: &str) -> u32 {
-    1
+/// review/polish 在 P8（#25）因 input 加入 draft_hash 升至 2（旧 checkpoint
+/// 首次加载 input 不匹配 → 全部失效重跑，无需迁移代码）。
+pub fn definition_version(def_id: &str) -> u32 {
+    match def_id {
+        "review" | "polish" => 2,
+        _ => 1,
+    }
 }
 
 /// 节点产物（run_chain 哈希 bytes 入 output_hash）。

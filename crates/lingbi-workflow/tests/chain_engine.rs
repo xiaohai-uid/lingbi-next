@@ -313,19 +313,34 @@ async fn machine_check_halt_on_empty_summary_then_resume_after_plan_fix() {
 }
 
 #[tokio::test]
-async fn blocking_review_triggers_polish_rewrite() {
+async fn blocking_review_repair_loop_then_settles() {
+    // P8 OutputGate 语义：blocking → polish 改写 → 复评（首轮阻塞、次轮干净）
     let dir = tempfile::TempDir::new().unwrap();
     let root = dir.path();
     init_book(root, true, "第一章", Some("主角踏上修行之路。"));
 
-    let provider = Arc::new(ScriptedProvider::new(standard_script(
-        REVIEW_BLOCKING, POLISH, DRAFT,
-    )));
+    let review_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let rc = review_calls.clone();
+    let script = move |req: &lingbi_ai::ChatRequest| {
+        let user = req.messages.last().map(|m| m.content.clone()).unwrap_or_default();
+        if user.contains("改写") {
+            POLISH.to_owned()
+        } else if user.contains("评审") {
+            if rc.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                REVIEW_BLOCKING.to_owned()
+            } else {
+                REVIEW_OK.to_owned()
+            }
+        } else {
+            DRAFT.to_owned()
+        }
+    };
+    let provider = Arc::new(ScriptedProvider::new(script));
     let report = run_chain(root, 1, provider.clone()).await.expect("run");
     completed(&report);
-    let polish = report.nodes.iter().find(|n| n.definition_id == "polish").unwrap();
-    assert_eq!(polish.note.as_deref(), Some("按评审意见改写"));
-    assert_eq!(provider.calls(), 3, "draft+review+polish 三次 AI 调用");
+    assert_eq!(report.repair_attempts, 1, "一次修复后复评通过");
+    // 修复证据：repair_attempts=1 + 定稿 = 润色改写文本（最终 polish 记录
+    // 是复评通过后的透传——如实记录最后一次动作）
     // 定稿 = 润色后文本
     let settled = std::fs::read_to_string(root.join("定稿/正文/001-第一章.md")).unwrap();
     assert!(settled.contains(POLISH));
