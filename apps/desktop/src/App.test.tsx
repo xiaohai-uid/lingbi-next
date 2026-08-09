@@ -766,4 +766,28 @@ describe("LingBi Next desktop shell", () => {
     expect(useAppStore.getState().bookCandidate).toBeNull();
     expect(screen.queryByText("旧书候选")).not.toBeInTheDocument();
   });
+
+  it("换书即清导出消息：打开另一本书清除上次书的导出回执 (P11)", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await createBookWithChapter(user);
+
+    // 导出 → footer 出现上次书导出回执
+    await user.click(screen.getByRole("button", { name: "导出 MD" }));
+    expect(await screen.findByText(/已导出到/)).toBeInTheDocument();
+    expect(useAppStore.getState().lastBookExport).not.toBeNull();
+
+    // 返回首页 → 打开同一本书（store bookOpen 路径）
+    await user.click(screen.getByText("高级功能"));
+    await user.click(screen.getByRole("button", { name: "返回首页" }));
+    await user.click(screen.getByRole("button", { name: /打开已有作品/ }));
+    await user.click(screen.getByText("我的小说"));
+    await screen.findByText("书仓已打开");
+
+    // 换书后导出回执不得残留（P11 实况：迁移书视图残留
+    // 「已导出到 …E2E书仓P11\export-第二章.md」）
+    expect(useAppStore.getState().lastBookExport).toBeNull();
+    expect(screen.queryByText(/已导出到/)).not.toBeInTheDocument();
+  });
 });
+

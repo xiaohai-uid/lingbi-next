@@ -497,9 +497,11 @@ pub fn consumer_full_scenario(binary: &Path) -> Result<(), String> {
     fill_input(&first, "项目路径", &mig_root);
     click_button(&first, "打开");
     wait_for_text(&first, "书仓已打开", Duration::from_secs(30));
-    // 换书清链：上次书（P11旅程书）的链结果与候选不得泄漏进迁移书视图
+    // 换书清链：上次书（P11旅程书）的链结果、候选与导出回执不得泄漏进
+    // 迁移书视图（P11 实况：残留「已确认：定稿/…」与「已导出到 …」）
     assert_text_absent(&first, "已确认：定稿");
     assert_text_absent(&first, "候选内容");
+    assert_text_absent(&first, "已导出到");
     click_button_retry(&first, "开局");
     wait_for_text(&first, "夜色如墨", Duration::from_secs(20));
     append_code_mirror(&first, "迁移后续写：灯芯又亮了一分。");

@@ -116,6 +116,24 @@ interface AppStore {
   exportDocument: (format: string) => Promise<void>;
 }
 
+// 换书即清视图态：任何换书入口（bookCreate/bookOpen）共用同一份重置。
+// 新增「每书视图」字段必须加到这里——手写枚举已两次漏项（链结果/候选、
+// 导出回执/生成瞬态，P11 #28 实况：迁移书视图残留旧书文案）。
+function bookViewReset() {
+  return {
+    chainRunning: false,
+    chainRunId: null,
+    chainError: null,
+    chainRun: null,
+    chainCurrentNode: null,
+    bookCandidate: null,
+    lastBookExport: null,
+    bookGenerating: false,
+    bookGenerationTaskId: null,
+    bookStreamingText: "",
+  };
+}
+
 function setError(set: (partial: Partial<AppStore>) => void, error: unknown) {
   const parsed = toCommandError(error);
   set({ error: parsed.message, errorCode: parsed.code });
@@ -189,13 +207,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         chapterHash: "",
         lastSavedChapterContent: "",
         saveState: "idle",
-        // 换书即清链：上次书的链结果/候选不得泄漏到新书（P11 #28 实况）
-        chainRunning: false,
-        chainRunId: null,
-        chainError: null,
-        chainRun: null,
-        chainCurrentNode: null,
-        bookCandidate: null,
+        ...bookViewReset(),
         selectedTab: "editor",
         status: "书仓已创建",
       });
@@ -231,13 +243,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         chapterHash: "",
         lastSavedChapterContent: "",
         saveState: "idle",
-        // 换书即清链：上次书的链结果/候选不得泄漏到新书（P11 #28 实况）
-        chainRunning: false,
-        chainRunId: null,
-        chainError: null,
-        chainRun: null,
-        chainCurrentNode: null,
-        bookCandidate: null,
+        ...bookViewReset(),
         selectedTab: "editor",
         status:
           book.recovered > 0 || book.recovery_failed > 0
