@@ -132,6 +132,56 @@ export interface TxReceipt {
   after_content_hash: string;
 }
 
+/// P9 #26 章事务链节点（start_chain/get_chain_status 返回）。
+export interface ChainNode {
+  node_id: string;
+  definition_id: string;
+  definition_version: number;
+  input_hash: string;
+  output_hash: string;
+  status: string;
+  provider: string | null;
+  model: string | null;
+  usage: { prompt_tokens: number; completion_tokens: number } | null;
+  error: string | null;
+  note: string | null;
+}
+
+/// P9 #26 交付报告（handoff 节点摘要）。
+export interface HandoffInfo {
+  ch: number;
+  chapter_path: string;
+  title: string;
+  words: number;
+  nodes: Array<{ definition_id: string; status: string }>;
+}
+
+/// P9 #26 章事务链运行结果。
+export interface ChainRun {
+  ch: number;
+  status: string;
+  run_id: string;
+  repair_attempts: number;
+  reject_reason: string | null;
+  book_input_hash: string;
+  nodes: ChainNode[];
+  checks: Array<{ ok: boolean; name: string; detail: string }>;
+  draft_path: string | null;
+  review_path: string | null;
+  handoff: HandoffInfo | null;
+}
+
+/// P9 #26 运行状态（轮询）。
+export interface ChainStatus {
+  run_id: string;
+  done: boolean;
+  status: string | null;
+  current_node: string | null;
+  repair_attempts: number | null;
+  result: ChainRun | null;
+  error: string | null;
+}
+
 export interface GenerationEvent {
   type: "delta" | "candidate" | "error" | "cancelled";
   task_id: string;
@@ -887,4 +937,36 @@ export const desktop = {
       after_content_hash: entry.hash,
     };
   },
+
+  // ---- P9 #26 章事务链（start_chain/cancel_chain/get_chain_status）----
+
+  async startChain(ch: number): Promise<{ run_id: string }> {
+    if (inTauri()) {
+      return invoke<{ run_id: string }>("start_chain", { ch });
+    }
+    return { run_id: `mock-${crypto.randomUUID()}` };
+  },
+
+  async cancelChain(runId: string): Promise<void> {
+    if (inTauri()) {
+      await invoke("cancel_chain", { runId });
+    }
+  },
+
+  async getChainStatus(runId: string): Promise<ChainStatus> {
+    if (inTauri()) {
+      return invoke<ChainStatus>("get_chain_status", { runId });
+    }
+    // mock 分支：测试注入（__setMockChainStatus）或立即完成
+    if (mockChainStatus && mockChainStatus.run_id === runId) {
+      return mockChainStatus;
+    }
+    return { run_id: runId, done: true, status: "Completed", current_node: null, repair_attempts: 0, result: null, error: null };
+  },
 };
+
+/// mock 分支可注入的链状态（App.test.tsx 用；生产 Tauri 路径不经过）。
+let mockChainStatus: ChainStatus | null = null;
+export function __setMockChainStatus(status: ChainStatus | null) {
+  mockChainStatus = status;
+}

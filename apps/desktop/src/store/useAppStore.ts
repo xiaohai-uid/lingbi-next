@@ -4,6 +4,7 @@ import {
   toCommandError,
   type BookCandidate,
   type BookSession,
+  type ChainRun,
   type Chapter,
   type Document,
   type ExportResult,
@@ -75,6 +76,15 @@ interface AppStore {
   // P5-5 声明式技巧卡（只读展示）
   skills: SkillCard[];
   loadSkills: () => Promise<void>;
+  // P9 #26 本章工作流（4 步模式）
+  chainRunning: boolean;
+  chainRunId: string | null;
+  chainError: string | null;
+  chainRun: ChainRun | null;
+  chainCurrentNode: string | null;
+  chainStart: () => Promise<void>;
+  chainCancel: () => Promise<void>;
+  chainReset: () => void;
   chapterCreate: (title: string) => Promise<void>;
   chapterOpen: (ch: number) => Promise<void>;
   chapterSave: () => Promise<void>;
@@ -425,6 +435,67 @@ export const useAppStore = create<AppStore>((set, get) => ({
       setError(set, error);
       set({ toolsLoading: false });
     }
+  },
+
+  // P9 #26 本章工作流：start_chain → 轮询 get_chain_status 至 done。
+  chainRunning: false,
+  chainRunId: null,
+  chainError: null,
+  chainRun: null,
+  chainCurrentNode: null,
+  async chainStart() {
+    const book = get().book;
+    const ch = get().currentCh;
+    if (!book || ch === null) return;
+    set({
+      chainRunning: true,
+      chainError: null,
+      chainRun: null,
+      chainRunId: null,
+      chainCurrentNode: null,
+    });
+    try {
+      const { run_id } = await desktop.startChain(ch);
+      set({ chainRunId: run_id });
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const status = await desktop.getChainStatus(run_id);
+        if (!status.done) {
+          set({ chainCurrentNode: status.current_node ?? null });
+          continue;
+        }
+        set({
+          chainRunning: false,
+          chainRun: status.result,
+          chainError: status.error ?? null,
+          chainCurrentNode: null,
+        });
+        break;
+      }
+    } catch (error) {
+      const parsed = toCommandError(error);
+      set({
+        chainRunning: false,
+        chainError:
+          parsed.code === "AiNoApiKey"
+            ? "未配置 API Key，请先到设置配置"
+            : parsed.message,
+      });
+    }
+  },
+  async chainCancel() {
+    const runId = get().chainRunId;
+    if (!runId || !get().chainRunning) return;
+    await desktop.cancelChain(runId);
+  },
+  chainReset() {
+    set({
+      chainRunning: false,
+      chainRunId: null,
+      chainError: null,
+      chainRun: null,
+      chainCurrentNode: null,
+    });
   },
 
   // P5-5 声明式技巧卡：只读静态数据，加载一次即可（不随章清空）。

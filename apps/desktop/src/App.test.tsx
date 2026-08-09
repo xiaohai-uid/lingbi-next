@@ -513,11 +513,173 @@ describe("LingBi Next desktop shell", () => {
     await user.click(screen.getByText("断点诊断"));
     expect(await screen.findByText(/status/)).toBeInTheDocument();
 
-    // 技能（P5-5 声明式只读卡：mock 两卡 + P9 占位提示）
+    // 技能（P5-5 声明式只读卡：mock 两卡）
     await user.click(screen.getByText("技能"));
     expect(await screen.findByText("题材引导（精简版）")).toBeInTheDocument();
     expect(screen.getByText("章节骨架")).toBeInTheDocument();
-    expect(screen.getByText(/4 步写作模式（P9 上线）/)).toBeInTheDocument();
+  });
+
+  it("shows 4-step workflow panel by default and 8 nodes only in advanced mode (P9)", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await createBookWithChapter(user);
+
+    // 4 步模式默认展示
+    expect(screen.getByText("本章工作流")).toBeInTheDocument();
+    expect(screen.getByText("准备本章")).toBeInTheDocument();
+    expect(screen.getByText("AI 写作")).toBeInTheDocument();
+    expect(screen.getByText("检查和优化")).toBeInTheDocument();
+    expect(screen.getByText("确认本章")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "运行本章工作流" })).toBeInTheDocument();
+    // 8 节点默认不可见（内部机制隐藏）
+    expect(screen.queryByText(/contract · /)).not.toBeInTheDocument();
+  });
+
+  it("runs the workflow, polls to completion and shows handoff (P9)", async () => {
+    const { __setMockChainStatus } = await import("./lib/desktop");
+    const user = userEvent.setup();
+    render(<App />);
+    await createBookWithChapter(user);
+
+    // 注入 mock 链结果（模拟运行完成）
+    const desktop = (await import("./lib/desktop")).desktop;
+    const startSpy = vi
+      .spyOn(desktop, "startChain")
+      .mockResolvedValue({ run_id: "mock-run-1" });
+    const mockRun = {
+      ch: 1,
+      status: "Completed",
+      run_id: "mock-run-1",
+      repair_attempts: 0,
+      reject_reason: null,
+      book_input_hash: "abc",
+      nodes: [
+        { node_id: "contract-1", definition_id: "contract", definition_version: 1, input_hash: "h", output_hash: "o", status: "Completed", provider: null, model: null, usage: null, error: null, note: null },
+        { node_id: "brief-1", definition_id: "brief", definition_version: 1, input_hash: "h", output_hash: "o", status: "Completed", provider: null, model: null, usage: null, error: null, note: null },
+        { node_id: "draft-1", definition_id: "draft", definition_version: 1, input_hash: "h", output_hash: "o", status: "Completed", provider: "openai", model: "gpt", usage: { prompt_tokens: 10, completion_tokens: 20 }, error: null, note: null },
+        { node_id: "mc-1", definition_id: "machine-check", definition_version: 1, input_hash: "h", output_hash: "o", status: "Completed", provider: null, model: null, usage: null, error: null, note: null },
+        { node_id: "review-1", definition_id: "review", definition_version: 2, input_hash: "h", output_hash: "o", status: "Completed", provider: "openai", model: "gpt", usage: { prompt_tokens: 10, completion_tokens: 20 }, error: null, note: null },
+        { node_id: "polish-1", definition_id: "polish", definition_version: 2, input_hash: "h", output_hash: "o", status: "Completed", provider: null, model: null, usage: null, error: null, note: "无阻塞问题，跳过改写" },
+        { node_id: "settlement-1", definition_id: "settlement", definition_version: 1, input_hash: "h", output_hash: "o", status: "Completed", provider: null, model: null, usage: null, error: null, note: null },
+        { node_id: "handoff-1", definition_id: "handoff", definition_version: 1, input_hash: "h", output_hash: "o", status: "Completed", provider: null, model: null, usage: null, error: null, note: null },
+      ],
+      checks: [],
+      draft_path: null,
+      review_path: null,
+      handoff: { ch: 1, chapter_path: "定稿/正文/001-第一章.md", title: "第一章", words: 131, nodes: [] },
+    };
+    __setMockChainStatus({
+      run_id: "mock-run-1",
+      done: true,
+      status: "Completed",
+      current_node: null,
+      repair_attempts: 0,
+      result: mockRun,
+      error: null,
+    });
+
+    await user.click(screen.getByRole("button", { name: "运行本章工作流" }));
+    // 完成态：定稿路径 + 4 步全勾
+    expect(
+      await screen.findByText(/已确认：定稿\/正文\/001-第一章.md/),
+    ).toBeInTheDocument();
+    startSpy.mockRestore();
+    // 内部机制（节点详情/哈希）默认不可见：节点列表不渲染
+    expect(screen.queryByText("节点详情")).not.toBeInTheDocument();
+    // 高级模式：8 节点可见 + 每节点「节点详情」折叠（details）
+    await user.click(screen.getByLabelText("高级模式（8 节点）"));
+    expect(await screen.findByText(/contract · Completed/)).toBeInTheDocument();
+    expect(screen.getByText(/draft · Completed/)).toBeInTheDocument();
+    expect(screen.getAllByText("节点详情").length).toBe(8);
+    __setMockChainStatus(null);
+  });
+
+  it("shows AI down (node failed) in workflow panel without blocking editing (P9)", async () => {
+    const { __setMockChainStatus } = await import("./lib/desktop");
+    const desktop = (await import("./lib/desktop")).desktop;
+    const user = userEvent.setup();
+    render(<App />);
+    await createBookWithChapter(user);
+
+    const startSpy = vi
+      .spyOn(desktop, "startChain")
+      .mockResolvedValue({ run_id: "mock-run-2" });
+    // AI 宕机：draft 节点 Failed（provider 网络错误）
+    __setMockChainStatus({
+      run_id: "mock-run-2",
+      done: true,
+      status: "Failed",
+      current_node: null,
+      repair_attempts: 0,
+      result: {
+        ch: 1,
+        status: "Failed",
+        run_id: "mock-run-2",
+        repair_attempts: 0,
+        reject_reason: null,
+        book_input_hash: "abc",
+        nodes: [
+          { node_id: "contract-1", definition_id: "contract", definition_version: 1, input_hash: "h", output_hash: "o", status: "Completed", provider: null, model: null, usage: null, error: null, note: null },
+          { node_id: "draft-1", definition_id: "draft", definition_version: 1, input_hash: "h", output_hash: "", status: "Failed", provider: "openai", model: "gpt", usage: null, error: "network error", note: null },
+        ],
+        checks: [],
+        draft_path: null,
+        review_path: null,
+        handoff: null,
+      },
+      error: null,
+    });
+    await user.click(screen.getByRole("button", { name: "运行本章工作流" }));
+    // 4 步模式直接显示失败节点与原因（AI 宕机）
+    expect(await screen.findByText(/draft 失败：network error/)).toBeInTheDocument();
+    // 编辑区不受影响
+    const editor = screen.getByLabelText("编辑器");
+    await user.type(editor, "AI 宕机也能写。");
+    expect((editor as HTMLTextAreaElement).value).toContain("AI 宕机也能写");
+    startSpy.mockRestore();
+    __setMockChainStatus(null);
+  });
+
+  it("shows engine error mapping in workflow panel without blocking editing (P9)", async () => {
+    const desktop = (await import("./lib/desktop")).desktop;
+    const user = userEvent.setup();
+    render(<App />);
+    await createBookWithChapter(user);
+
+    // 引擎异常：start_chain 返回命令错误
+    const spy = vi.spyOn(desktop, "startChain").mockRejectedValue({
+      code: "BookCorrupted",
+      message: "书仓损坏: 追踪状态解析失败",
+      retryable: false,
+    });
+    await user.click(screen.getByRole("button", { name: "运行本章工作流" }));
+    expect(await screen.findByText(/书仓损坏/)).toBeInTheDocument();
+    // 编辑区不受影响
+    const editor = screen.getByLabelText("编辑器");
+    await user.type(editor, "引擎异常也能写。");
+    expect((editor as HTMLTextAreaElement).value).toContain("引擎异常也能写");
+    spy.mockRestore();
+  });
+
+  it("shows friendly error when no API key and keeps editor usable (P9)", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await createBookWithChapter(user);
+
+    // mock startChain 抛 NoApiKey
+    const desktop = (await import("./lib/desktop")).desktop;
+    const spy = vi.spyOn(desktop, "startChain").mockRejectedValue({
+      code: "AiNoApiKey",
+      message: "no API key configured",
+      retryable: false,
+    });
+    await user.click(screen.getByRole("button", { name: "运行本章工作流" }));
+    expect(await screen.findByText("未配置 API Key，请先到设置配置")).toBeInTheDocument();
+    // 编辑区不受影响：仍可输入与保存
+    const editor = screen.getByLabelText("编辑器");
+    await user.type(editor, "无 Key 也能写。");
+    expect((editor as HTMLTextAreaElement).value).toContain("无 Key 也能写");
+    spy.mockRestore();
   });
 
   it("exports the open chapter (Book V3)", async () => {

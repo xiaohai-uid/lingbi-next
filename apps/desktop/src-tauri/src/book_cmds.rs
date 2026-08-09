@@ -27,12 +27,15 @@ pub struct CancelChainDto {
     pub cancelled: bool,
 }
 
-/// get_chain_status：done + 状态 + 全量结果（完成后一次性取出）。
+/// get_chain_status：done + 状态 + 当前节点（运行中步骤展示）+ 全量结果
+/// （完成后一次性取出）。
 #[derive(serde::Serialize)]
 pub struct ChainStatusDto {
     pub run_id: String,
     pub done: bool,
     pub status: Option<String>,
+    pub current_node: Option<String>,
+    pub repair_attempts: Option<u32>,
     pub result: Option<lingbi_commands::ChainRunDto>,
     pub error: Option<String>,
 }
@@ -454,6 +457,8 @@ pub fn get_chain_status(
                 run_id,
                 done: true,
                 status: Some(dto.status.clone()),
+                current_node: None,
+                repair_attempts: Some(dto.repair_attempts),
                 result: Some(dto),
                 error: None,
             },
@@ -461,6 +466,8 @@ pub fn get_chain_status(
                 run_id,
                 done: true,
                 status: None,
+                current_node: None,
+                repair_attempts: None,
                 result: None,
                 error: Some(e.message),
             },
@@ -477,7 +484,9 @@ pub fn get_chain_status(
             .as_ref()
             .map(|r| r.status != lingbi_workflow::RunStatus::Running)
             .unwrap_or(false),
-        status: rec.map(|r| format!("{:?}", r.status)),
+        status: rec.as_ref().map(|r| format!("{:?}", r.status)),
+        current_node: rec.as_ref().map(|r| r.current_node.clone()).filter(|n| !n.is_empty()),
+        repair_attempts: rec.as_ref().map(|r| r.repair_attempts),
         result: None,
         error: None,
     })

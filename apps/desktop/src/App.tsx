@@ -537,6 +537,170 @@ function SaveStatus() {
 }
 
 /// Book V3 编辑器（P5-1：建章/读章/存章/保存状态；AI 面随 P5-2 接入）。
+/// P9 #26 本章工作流面板：4 步模式默认（准备本章→AI 写作→检查和优化→
+/// 确认本章），高级模式显式切换展示 8 节点；内部机制（哈希/账本）仅高级
+/// 折叠展示。错误只出现在本面板（黄金路径无条件成立）。
+function WorkflowPanel() {
+  const currentCh = useAppStore((state) => state.currentCh);
+  const chainRunning = useAppStore((state) => state.chainRunning);
+  const chainError = useAppStore((state) => state.chainError);
+  const chainRun = useAppStore((state) => state.chainRun);
+  const chainCurrentNode = useAppStore((state) => state.chainCurrentNode);
+  const chainStart = useAppStore((state) => state.chainStart);
+  const chainCancel = useAppStore((state) => state.chainCancel);
+  const [advanced, setAdvanced] = useState(false);
+
+  const steps = [
+    { id: "prepare", label: "准备本章", nodes: ["contract", "brief"] },
+    { id: "draft", label: "AI 写作", nodes: ["draft"] },
+    { id: "polish", label: "检查和优化", nodes: ["machine-check", "review", "polish"] },
+    { id: "confirm", label: "确认本章", nodes: ["settlement", "handoff"] },
+  ];
+
+  const nodeStatus = (defId: string): string | null =>
+    chainRun?.nodes.find((n) => n.definition_id === defId)?.status ?? null;
+
+  const stepState = (nodes: string[]) => {
+    const statuses = nodes.map((n) => nodeStatus(n)).filter(Boolean);
+    if (statuses.some((s) => s === "Failed" || s === "Cancelled")) return "failed";
+    if (statuses.length > 0 && statuses.every((s) => s === "Completed")) return "done";
+    return "pending";
+  };
+
+  // 运行中：由 current_node 推导当前步骤
+  const runningStep = (() => {
+    if (!chainRunning || !chainCurrentNode) return null;
+    return steps.find((step) => step.nodes.includes(chainCurrentNode))?.id ?? null;
+  })();
+
+  const rejectText: Record<string, string> = {
+    BlockingIssuesRemain: "评审阻塞问题未解（已自动修复 2 轮），未确认本章",
+    MachineCheckFailed: "机检未过，请先完善本章计划（摘要/编号/占位符）",
+    RatchetRejected: "本章已确认过，重写走回炉路径",
+    BudgetExceeded: "Token 预算超限",
+    Cancelled: "已取消",
+  };
+
+  return (
+    <section className="workflow-panel">
+      <h2>本章工作流</h2>
+      {chainRun?.handoff ? (
+        <p className="hint">
+          已确认：{chainRun.handoff.chapter_path}（{chainRun.handoff.words} 字）
+        </p>
+      ) : null}
+      {chainRun && chainRun.reject_reason ? (
+        <p className="workflow-reject">
+          {rejectText[chainRun.reject_reason] ?? chainRun.reject_reason}
+        </p>
+      ) : null}
+      {chainError ? <p className="workflow-error">{chainError}</p> : null}
+      {chainRun && !chainError ? (
+        (() => {
+          const failed = chainRun.nodes.find(
+            (n) => n.status === "Failed" || n.status === "Cancelled",
+          );
+          if (!failed) return null;
+          return (
+            <p className="workflow-error">
+              {failed.definition_id} 失败：{failed.error ?? failed.note}
+            </p>
+          );
+        })()
+      ) : null}
+      <ol className="workflow-steps">
+        {steps.map((step) => {
+          const state = stepState(step.nodes);
+          const active = runningStep === step.id;
+          return (
+            <li
+              key={step.id}
+              className={
+                state === "failed"
+                  ? "failed"
+                  : state === "done"
+                    ? "done"
+                    : active
+                      ? "active"
+                      : ""
+              }
+            >
+              <strong>{step.label}</strong>
+              {state === "done" ? " ✔" : active ? " …" : null}
+            </li>
+          );
+        })}
+      </ol>
+      {chainRunning ? (
+        <button onClick={() => void chainCancel()}>取消运行</button>
+      ) : (
+        <button
+          disabled={currentCh === null}
+          onClick={() => void chainStart()}
+        >
+          运行本章工作流
+        </button>
+      )}
+      <label className="workflow-advanced">
+        <input
+          type="checkbox"
+          checked={advanced}
+          onChange={(event) => setAdvanced(event.target.checked)}
+        />
+        高级模式（8 节点）
+      </label>
+      {advanced && chainRun ? (
+        <ul className="node-list">
+          {chainRun.nodes.map((node) => (
+            <li key={node.node_id} className={node.status.toLowerCase()}>
+              <strong>
+                {node.definition_id} · {node.status}
+              </strong>
+              {node.note ? <span className="hint">{node.note}</span> : null}
+              {node.error ? (
+                <span className="workflow-error">{node.error}</span>
+              ) : null}
+              {advanced ? (
+                <details>
+                  <summary>节点详情</summary>
+                  <pre className="tool-output">
+                    {[
+                      `provider: ${node.provider ?? "-"}`,
+                      `model: ${node.model ?? "-"}`,
+                      `usage: ${
+                        node.usage
+                          ? `${node.usage.prompt_tokens}/${node.usage.completion_tokens}`
+                          : "-"
+                      }`,
+                      `input_hash: ${node.input_hash || "-"}`,
+                      `output_hash: ${node.output_hash || "-"}`,
+                    ].join(String.fromCharCode(10))}
+                  </pre>
+                </details>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {chainRun?.checks && chainRun.checks.length > 0 ? (
+        <details>
+          <summary>机检清单</summary>
+          <ul className="check-list">
+            {chainRun.checks.map((check) => (
+              <li key={check.name} className={check.ok ? "ok" : "fail"}>
+                <strong>
+                  {check.ok ? "✔" : "✘"} {check.name}
+                </strong>
+                <span className="hint">{check.detail}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+    </section>
+  );
+}
+
 function BookEditor() {
   const book = useAppStore((state) => state.book);
   const bookChapters = useAppStore((state) => state.bookChapters);
@@ -641,6 +805,7 @@ function BookEditor() {
         </details>
       </aside>
       <aside className="tools">
+        <WorkflowPanel />
         <h2>写作工具</h2>
         <details>
           <summary onClick={() => void loadOutline()}>大纲</summary>
@@ -706,7 +871,7 @@ function BookEditor() {
               ))}
             </ul>
           )}
-          <p className="hint">完整小白 4 步写作模式（P9 上线）</p>
+          <p className="hint">技能卡为声明式只读展示</p>
         </details>
         {toolsLoading ? <p className="hint">加载中…</p> : null}
       </aside>

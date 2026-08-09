@@ -371,3 +371,56 @@ select {
 .error {
   color: #b3261e;
 }
+
+/* P9 #26 本章工作流面板 */
+.workflow-panel {
+  border-bottom: 1px solid var(--border, #ddd);
+  padding-bottom: 0.6rem;
+  margin-bottom: 0.6rem;
+}
+.workflow-panel h2 {
+  margin: 0 0 0.4rem;
+}
+.workflow-steps {
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  font-size: 0.85rem;
+}
+.workflow-steps li {
+  padding: 0.15rem 0;
+  color: #888;
+}
+.workflow-steps li.active {
+  color: var(--accent, #1a6fb5);
+  font-weight: bold;
+}
+.workflow-steps li.done {
+  color: #2e7d32;
+}
+.workflow-steps li.failed {
+  color: #c62828;
+}
+.workflow-error {
+  color: #c62828;
+  font-size: 0.85rem;
+}
+.workflow-reject {
+  color: #b26a00;
+  font-size: 0.85rem;
+}
+.workflow-advanced {
+  display: block;
+  margin: 0.4rem 0;
+  font-size: 0.8rem;
+}
+.node-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.8rem;
+}
+.node-list li {
+  padding: 0.2rem 0;
+  border-bottom: 1px dashed #eee;
+}
