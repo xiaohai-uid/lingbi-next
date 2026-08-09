@@ -174,7 +174,9 @@ def walk_files(root):
 
 # ── 校验 ────────────────────────────────────────────────────────────────
 def validate_book(root, tree, defs):
-    errors = []
+    """返回 (errors, warnings)。tolerated 条目（顶层工具文件，P12 真实书仓
+    对齐）报 ⚠ 不阻断；未知文件类别照旧 ✘ 阻断。"""
+    errors, warnings = [], []
     for d in tree.get("required_dirs", []):
         if not os.path.isdir(os.path.join(root, d)):
             errors.append("缺必需目录: %s" % d)
@@ -186,6 +188,9 @@ def validate_book(root, tree, defs):
         entry = match_path(rel, tree["paths"])
         if entry is None:
             errors.append("未知文件类别: %s" % rel)
+            continue
+        if entry.get("tolerated"):
+            warnings.append("工具文件（容忍）: %s" % rel)
             continue
         if rel == "book.yaml":
             try:
@@ -222,7 +227,7 @@ def validate_book(root, tree, defs):
             errors.append("章节编号重复: %s" % chapter_nums)
         if nums != list(range(1, max(nums) + 1)):
             errors.append("章节编号不连续: %s" % nums)
-    return errors
+    return errors, warnings
 
 
 def ratchet_ok(prev_root, next_root, allow_change_dirs=()):
@@ -307,6 +312,38 @@ def _set_json(path, key, value):
         json.dumps(d, ensure_ascii=False, indent=1))
 
 
+def make_real_shape(base):
+    """真实《零界道种》书仓形态正例：good 基底 + 22 类真实文件（P12 对齐）。
+    顶层工具/插件/技能文件走容忍档；大纲/设定作者内容走开放内容树。"""
+    root = os.path.join(base, "real-shape")
+    shutil.copytree(os.path.join(base, "good"), root)
+    files = [
+        ".gitignore", "AGENTS.md", "README.md", "状态卡.md",
+        ".zcode-plugin/plugin.json",
+        "scripts/doctor.py", "scripts/state_card.py", "scripts/stats.py",
+        "skills/storyrepo/SKILL.md",
+        "skills/storyrepo/references/anti-ai-flavor.md",
+        "skills/storyrepo/references/opening.md",
+        "skills/storyrepo/references/protocol.md",
+        "skills/storyrepo/references/provenance.md",
+        "skills/storyrepo/references/review-schema.md",
+        "skills/storyrepo/references/task-brief.md",
+        "skills/storyrepo/references/tracking.md",
+        "skills/storyrepo/templates/init-book.sh",
+        "大纲/伏笔登记簿.md",
+        "大纲/卷纲/全书蓝图.md",
+        "定稿/设定/世界观.md",
+        "定稿/设定/力量体系.md",
+        "定稿/设定/时间线.md",
+    ]
+    for rel in files:
+        p = os.path.join(root, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8", newline="\n") as f:
+            f.write("# %s\n" % os.path.basename(rel))
+    return root
+
+
 def main():
     ap = argparse.ArgumentParser(description="Book V3 契约校验器")
     ap.add_argument("book_root", nargs="?", help="书仓根(单仓模式)")
@@ -319,8 +356,10 @@ def main():
     defs = schema["$defs"]
     total_err = 0
 
-    def report(name, errors):
+    def report(name, errors, warnings=()):
         nonlocal total_err
+        for w in warnings:
+            print("    ⚠ %s" % w)
         if errors:
             total_err += len(errors)
             print("✘ %s (%d):" % (name, len(errors)))
@@ -334,7 +373,8 @@ def main():
         ids = sorted(os.listdir(steps))
         for sid in ids:
             root = os.path.join(steps, sid, "book")
-            report("%s tree" % sid, validate_book(root, tree, defs))
+            errs, warns = validate_book(root, tree, defs)
+            report("%s tree" % sid, errs, warns)
         # 棘轮跨步(允许 revision 步骤)
         allow = {"0019-revision-2"}
         for a, b in zip(ids, ids[1:]):
@@ -352,19 +392,37 @@ def main():
         try:
             cases = build_negatives(tmp)
             for name, root in sorted(cases.items()):
-                errs = validate_book(root, tree, defs)
+                errs, _warns = validate_book(root, tree, defs)
                 if errs:
                     print("✔ %s 被拒 (%d 项)" % (name, len(errs)))
                 else:
                     total_err += 1
                     print("✘ %s 未被拒!" % name)
             # 正例确认:good 基底必须通过
-            errs = validate_book(os.path.join(tmp, "good"), tree, defs)
+            errs, _warns = validate_book(os.path.join(tmp, "good"), tree, defs)
             if errs:
                 total_err += len(errs)
                 print("✘ good 基底意外失败:", errs)
             else:
                 print("✔ good 基底通过")
+            # P12 real-shape 正例:真实《零界道种》形态(22 类工具/作者内容
+            # 文件)必须 0 阻断(容忍档 ⚠ 不计数)
+            real_shape = make_real_shape(tmp)
+            errs, warns = validate_book(real_shape, tree, defs)
+            if errs:
+                total_err += len(errs)
+                print("✘ real-shape 意外阻断:", errs)
+            else:
+                print("✔ real-shape 通过 (容忍 %d 项)" % len(warns))
+            # 未知文件纪律仍保:real-shape 上加一个树外文件必须被拒
+            stray = os.path.join(real_shape, "root-junk.txt")
+            open(stray, "w").write("junk")
+            errs, _ = validate_book(real_shape, tree, defs)
+            if errs and any("未知文件类别: root-junk.txt" in e for e in errs):
+                print("✔ real-shape+stray 仍拒未知文件")
+            else:
+                total_err += 1
+                print("✘ real-shape+stray 未被拒!")
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
         print("self-test errors:", total_err)
@@ -372,7 +430,8 @@ def main():
 
     if not args.book_root:
         ap.error("需要 book_root / --corpus / --self-test 之一")
-    report(args.book_root, validate_book(args.book_root, tree, defs))
+    errs, warns = validate_book(args.book_root, tree, defs)
+    report(args.book_root, errs, warns)
     return 1 if total_err else 0
 
 
