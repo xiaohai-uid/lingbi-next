@@ -188,9 +188,16 @@ fn set_field(row: &mut OutlineRow, key: &str, val: String) {
     }
 }
 
-/// 读 大纲/细纲蓝图.md，返回规范行列表（按 ch 升序）；无文件返回 []。
+/// 读 大纲/细纲蓝图.md（缺失回退 大纲/章纲.md——storyrepo 真实书仓惯例，
+/// P12 #54 验收暴露：真实《零界道种》无细纲蓝图、计划在章纲.md），
+/// 返回规范行列表（按 ch 升序）；两文件均无返回 []。
 pub fn load_outline(root: &Path) -> Vec<OutlineRow> {
-    let Ok(text) = std::fs::read_to_string(root.join(OUTLINE_DIR).join(OUTLINE_FILE)) else {
+    let outline_path = if root.join(OUTLINE_DIR).join(OUTLINE_FILE).is_file() {
+        root.join(OUTLINE_DIR).join(OUTLINE_FILE)
+    } else {
+        root.join(OUTLINE_DIR).join("章纲.md")
+    };
+    let Ok(text) = std::fs::read_to_string(&outline_path) else {
         return Vec::new();
     };
     let mut rows: Vec<OutlineRow> = Vec::new();

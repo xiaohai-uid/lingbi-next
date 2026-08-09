@@ -88,6 +88,8 @@ const NO_OUTLINE: &str = concat!(
 fn scenario_no_outline() {
     scenario("no_outline", 2, |root| {
         fs::remove_file(root.join("大纲").join("细纲蓝图.md")).unwrap();
+        // P12 #54：细纲蓝图缺失 → 产品回退 章纲.md；「无大纲」语义 = 两文件均无
+        fs::remove_file(root.join("大纲").join("章纲.md")).unwrap();
     }, NO_OUTLINE.to_owned());
 }
 
@@ -176,6 +178,8 @@ fn budget_125_oracle() -> String {
 fn scenario_budget_rounds_half_even_at_display() {
     scenario("budget_125", 2, |root| {
         fs::remove_file(root.join("大纲").join("细纲蓝图.md")).unwrap();
+        // P12 #54：细纲蓝图缺失 → 产品回退 章纲.md；「无大纲」语义 = 两文件均无
+        fs::remove_file(root.join("大纲").join("章纲.md")).unwrap();
         write(
             root,
             "定稿/正文/001-开局.md",
@@ -199,6 +203,8 @@ fn budget_display_975_oracle() -> String {
 fn scenario_budget_display_975_rounds_correctly() {
     scenario("budget_display_975", 2, |root| {
         fs::remove_file(root.join("大纲").join("细纲蓝图.md")).unwrap();
+        // P12 #54：细纲蓝图缺失 → 产品回退 章纲.md；「无大纲」语义 = 两文件均无
+        fs::remove_file(root.join("大纲").join("章纲.md")).unwrap();
         fs::remove_file(root.join("定稿").join("正文").join("001-开局.md")).unwrap();
         write(root, "定稿/记忆/章摘要/001.md", &"x".repeat(975));
         write(root, "追踪/_tracking-state.json", r#"{"entity_states": {}}"#);

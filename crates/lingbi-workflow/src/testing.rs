@@ -90,6 +90,10 @@ impl AiProvider for ScriptedProvider {
 }
 
 /// 标准脚本：草稿文本 / 评审 JSON / 润色文本 按提示词路由。
+/// 用指令独特标记路由（评审以下草稿 / 根据评审意见改写），而非宽泛
+/// 「评审」「改写」子串——真实书仓的任务书可含「改写」字样（如《零界道种》
+/// 风格宪法「续写、改写、去AI味」），宽泛匹配会把评审请求误路由到润色
+/// （P12 #54 真实书仓验收暴露）。
 pub fn standard_script(
     review_json: &'static str,
     polish_text: &'static str,
@@ -101,10 +105,10 @@ pub fn standard_script(
             .last()
             .map(|m| m.content.clone())
             .unwrap_or_default();
-        if user.contains("改写") {
-            polish_text.to_owned()
-        } else if user.contains("评审") {
+        if user.contains("评审以下草稿") {
             review_json.to_owned()
+        } else if user.contains("根据评审意见改写") {
+            polish_text.to_owned()
         } else {
             draft_text.to_owned()
         }

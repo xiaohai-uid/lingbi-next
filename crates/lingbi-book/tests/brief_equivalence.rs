@@ -222,6 +222,10 @@ const MINIMAL: &str = concat!(
 fn scenario_minimal_book_placeholder_title() {
     scenario("minimal", 3, |root| {
         fs::remove_file(root.join("大纲").join("细纲蓝图.md")).unwrap();
+        // P12 #54：细纲蓝图缺失时产品回退 大纲/章纲.md（真实书仓惯例，
+        // outline_fallback.rs 覆盖）；「无大纲占位」语义 = 两文件均无——
+        // 此处同时移除章纲.md，保持引擎等价 oracle 不变。
+        fs::remove_file(root.join("大纲").join("章纲.md")).unwrap();
         for f in fs::read_dir(root.join("定稿").join("正文")).unwrap() {
             fs::remove_file(f.unwrap().path()).unwrap();
         }

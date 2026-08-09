@@ -184,7 +184,7 @@ fn handle_sse(stream: &mut std::net::TcpStream) -> std::io::Result<()> {
         let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(30)));
         let _ = stream.read(&mut hold);
         Ok(())
-    } else if body_text.contains("改写") {
+    } else if body_text.contains("根据评审意见改写") {
         // P11 #28 polish 节点：按评审意见改写
         let body =
             "data: {\"choices\":[{\"delta\":{\"content\":\"E2E润色稿\"}}]}\n\ndata: [DONE]\n\n";
@@ -195,8 +195,10 @@ fn handle_sse(stream: &mut std::net::TcpStream) -> std::io::Result<()> {
         );
         write!(stream, "{head}")?;
         stream.flush()
-    } else if body_text.contains("评审") {
-        // P11 #28 review 节点：奇数轮 blocking、偶数轮 clean（Gate 返工）
+    } else if body_text.contains("评审以下草稿") {
+        // P11 #28 review 节点：奇数轮 blocking、偶数轮 clean（Gate 返工）。
+        // 路由用指令独特标记（评审以下草稿 / 根据评审意见改写）而非宽泛
+        // 「评审」「改写」——任务书可含「改写」（真实书仓风格宪法，P12）。
         let call = REVIEW_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let issues = if call % 2 == 0 {
             r#"[{"severity":"critical","category":"logic","location":"L1","description":"前后矛盾","evidence":"x","fix_hint":"y"}]"#
