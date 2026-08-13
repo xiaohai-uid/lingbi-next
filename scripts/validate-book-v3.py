@@ -19,6 +19,13 @@ import shutil
 import sys
 import tempfile
 
+# Windows GBK 控制台无法编码 ✔/✘/⚠，强制 UTF-8 输出（Linux 行为不变）
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except AttributeError:
+    pass
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCHEMA_PATH = os.path.join(ROOT, "contracts", "book", "book-v3.schema.json")
 TREE_PATH = os.path.join(ROOT, "contracts", "book", "book-v3.tree.json")
