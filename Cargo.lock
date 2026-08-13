@@ -716,6 +716,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
 
 [[package]]
+name = "glob"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
+
+[[package]]
 name = "h2"
 version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1009,6 +1015,8 @@ checksum = "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9"
 dependencies = [
  "equivalent",
  "hashbrown 0.17.1",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -1108,6 +1116,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "lingbi-book"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "glob",
+ "indexmap",
+ "lingbi-contracts",
+ "lingbi-recovery",
+ "lingbi-storage",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
+name = "lingbi-commands"
+version = "0.1.0"
+dependencies = [
+ "lingbi-ai",
+ "lingbi-application",
+ "lingbi-book",
+ "lingbi-contracts",
+ "lingbi-import-export",
+ "lingbi-migration",
+ "lingbi-recovery",
+ "lingbi-storage",
+ "lingbi-workflow",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "lingbi-contracts"
 version = "0.1.0"
 dependencies = [
@@ -1133,11 +1178,15 @@ dependencies = [
  "chrono",
  "lingbi-ai",
  "lingbi-application",
+ "lingbi-book",
+ "lingbi-commands",
  "lingbi-contracts",
  "lingbi-domain",
+ "lingbi-migration",
  "lingbi-mutation",
  "lingbi-recovery",
  "lingbi-storage",
+ "lingbi-workflow",
  "reqwest",
  "serde_json",
  "sha2",
@@ -1152,7 +1201,9 @@ version = "0.1.0"
 dependencies = [
  "reqwest",
  "serde_json",
+ "sha2",
  "tempfile",
+ "uuid",
 ]
 
 [[package]]
@@ -1185,6 +1236,21 @@ dependencies = [
  "tokio",
  "uuid",
  "zip",
+]
+
+[[package]]
+name = "lingbi-migration"
+version = "0.1.0"
+dependencies = [
+ "lingbi-book",
+ "lingbi-contracts",
+ "lingbi-import-export",
+ "lingbi-storage",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "uuid",
 ]
 
 [[package]]
@@ -1247,6 +1313,26 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "uuid",
+]
+
+[[package]]
+name = "lingbi-workflow"
+version = "0.1.0"
+dependencies = [
+ "async-stream",
+ "chrono",
+ "futures",
+ "lingbi-ai",
+ "lingbi-book",
+ "lingbi-contracts",
+ "lingbi-storage",
+ "lingbi-workflow",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
  "uuid",
 ]
 

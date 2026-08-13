@@ -962,12 +962,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "futures"
+version = "0.3.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a88cf1f829d945f548cf8fec32c61b1f202b6d93b45848602fc02af4b12ad218"
+dependencies = [
+ "futures-channel",
+ "futures-core",
+ "futures-executor",
+ "futures-io",
+ "futures-sink",
+ "futures-task",
+ "futures-util",
+]
+
+[[package]]
 name = "futures-channel"
 version = "0.3.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "262590f4fe6afeb0bc83be1daa64e52657fe185690a958af7f3ad0e92085c5ae"
 dependencies = [
  "futures-core",
+ "futures-sink",
 ]
 
 [[package]]
@@ -1022,6 +1038,7 @@ version = "0.3.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a77a90a256fce34da66415271e30f94ee91c57b04b8a2c042d9cf3220179deaa"
 dependencies = [
+ "futures-channel",
  "futures-core",
  "futures-io",
  "futures-macro",
@@ -1852,6 +1869,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "lingbi-book"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "glob",
+ "indexmap 2.14.0",
+ "lingbi-contracts",
+ "lingbi-storage",
+ "regex",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "lingbi-commands"
+version = "0.1.0"
+dependencies = [
+ "lingbi-ai",
+ "lingbi-application",
+ "lingbi-book",
+ "lingbi-contracts",
+ "lingbi-import-export",
+ "lingbi-migration",
+ "lingbi-recovery",
+ "lingbi-storage",
+ "lingbi-workflow",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "lingbi-contracts"
 version = "0.1.0"
 dependencies = [
@@ -1863,13 +1913,18 @@ name = "lingbi-desktop"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "futures",
  "lingbi-ai",
  "lingbi-application",
+ "lingbi-book",
+ "lingbi-commands",
  "lingbi-contracts",
  "lingbi-domain",
  "lingbi-import-export",
  "lingbi-recovery",
  "lingbi-security",
+ "lingbi-storage",
+ "lingbi-workflow",
  "lingbi-writing",
  "serde",
  "serde_json",
@@ -1903,6 +1958,20 @@ dependencies = [
  "sha2",
  "uuid",
  "zip",
+]
+
+[[package]]
+name = "lingbi-migration"
+version = "0.1.0"
+dependencies = [
+ "lingbi-book",
+ "lingbi-contracts",
+ "lingbi-import-export",
+ "lingbi-storage",
+ "serde",
+ "serde_json",
+ "sha2",
+ "uuid",
 ]
 
 [[package]]
@@ -1955,6 +2024,24 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "uuid",
+]
+
+[[package]]
+name = "lingbi-workflow"
+version = "0.1.0"
+dependencies = [
+ "async-stream",
+ "chrono",
+ "futures",
+ "lingbi-ai",
+ "lingbi-book",
+ "lingbi-contracts",
+ "lingbi-storage",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
  "uuid",
 ]
 

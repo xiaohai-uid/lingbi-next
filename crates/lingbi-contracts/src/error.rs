@@ -9,6 +9,9 @@ pub enum ErrorCode {
     ProjectCorrupted,
     DiskWriteFailed,
 
+    BookNotFound,
+    BookCorrupted,
+
     DocumentNotFound,
     DocumentAlreadyExists,
     DocumentConflict,

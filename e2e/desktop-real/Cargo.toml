@@ -7,7 +7,9 @@ description = "Real LingBi desktop binary E2E driven through tauri-driver (Windo
 [dependencies]
 reqwest = { version = "0.12", features = ["blocking", "json"] }
 serde_json = "1"
+sha2 = "0.10"
 tempfile = "3"
+uuid = { version = "1", features = ["v4"] }
 
 # NOTE: this crate intentionally depends only on the production release
 # binary it drives. It must not depend on lingbi crates: the E2E has to

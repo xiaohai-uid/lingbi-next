@@ -1,3 +1,4 @@
+mod book_cmds;
 mod recent;
 
 use lingbi_ai::{AiError, CancellationToken};
@@ -28,6 +29,18 @@ struct DesktopState {
     generation_services: Mutex<HashMap<String, Arc<GenerationService>>>,
     generation_tokens: Mutex<HashMap<Uuid, CancellationToken>>,
     recent: Mutex<Option<RecentProjects>>,
+    /// Book V3 会话根（P4 命令层；`open_book` 设置，其余命令从中取书仓）。
+    book_root: Mutex<Option<String>>,
+    /// P5-2：Book V3 生成任务取消令牌（book_generate）。
+    book_generation_tokens: Mutex<HashMap<Uuid, lingbi_ai::CancellationToken>>,
+    /// P8 #25：章事务链运行取消令牌（start_chain → cancel_chain）。
+    /// Arc<Mutex>：后台任务克隆持有，完成后自清理。
+    chain_tokens: Arc<Mutex<HashMap<String, std::sync::Arc<lingbi_ai::CancellationToken>>>>,
+    /// P8 #25：章事务链运行结果（start_chain 完成/失败后；重启后从 run 台账
+    /// 经 get_chain_status 只读状态）。
+    chain_results: Arc<
+        Mutex<HashMap<String, Result<lingbi_commands::ChainRunDto, lingbi_commands::CommandError>>>,
+    >,
 }
 
 #[derive(Clone)]
@@ -64,7 +77,7 @@ impl From<CurrentSession> for SessionDto {
     }
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 struct CommandErrorDto {
     code: String,
     message: String,
@@ -75,6 +88,16 @@ impl From<AppError> for CommandErrorDto {
     fn from(error: AppError) -> Self {
         Self {
             code: format!("{:?}", error.code),
+            message: error.message,
+            retryable: error.retryable,
+        }
+    }
+}
+
+impl From<lingbi_commands::CommandError> for CommandErrorDto {
+    fn from(error: lingbi_commands::CommandError) -> Self {
+        Self {
+            code: error.code,
             message: error.message,
             retryable: error.retryable,
         }
@@ -124,6 +147,34 @@ enum GenerationEventDto {
     },
 }
 
+/// P5-2 Book V3 生成事件（独立事件名 book-generation-event，不污染 V2）。
+#[derive(Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum BookGenerationEventDto {
+    Delta {
+        task_id: Uuid,
+        content: String,
+    },
+    Candidate {
+        task_id: Uuid,
+        candidate_id: String,
+        ch: i64,
+        content: String,
+    },
+    Error {
+        task_id: Uuid,
+        error: CommandErrorDto,
+    },
+    Cancelled {
+        task_id: Uuid,
+    },
+}
+
+#[derive(Serialize)]
+struct BookGenerateStartDto {
+    task_id: Uuid,
+}
+
 #[tauri::command]
 async fn project_create(
     state: State<'_, DesktopState>,
@@ -158,7 +209,7 @@ async fn project_create(
         .lock()
         .map_err(|_| command_error("LOCK_ERROR", "document service lock", false))?
         .insert(root.clone(), documents);
-    record_recent(&state, &name, &root);
+    record_recent(&state, &name, &root, "v2");
     let current = CurrentSession {
         root,
         snapshot,
@@ -203,7 +254,7 @@ async fn project_open(
         .lock()
         .map_err(|_| command_error("LOCK_ERROR", "document service lock", false))?
         .insert(root.clone(), documents);
-    record_recent(&state, &snapshot.project.name, &root);
+    record_recent(&state, &snapshot.project.name, &root, "v2");
     let current = CurrentSession {
         root,
         snapshot,
@@ -474,9 +525,13 @@ struct ProviderStatusDto {
     configured: bool,
     provider_id: String,
     model_id: String,
+    /// P5-5 高级设置回显：与保存值一致（默认 0.7 / 2048），重启后仍在。
+    temperature: f32,
+    max_tokens: u32,
 }
 
-/// Whether an AI service is configured, and with which provider/model.
+/// Whether an AI service is configured, and with which provider/model
+/// (plus the persisted 高级设置 temperature/max_tokens for read-back).
 /// Never returns the API key.
 #[tauri::command]
 async fn provider_status(
@@ -501,10 +556,13 @@ async fn provider_status(
         .map_err(CommandErrorDto::from)?
         .map(|value| value.expose().to_owned())
         .unwrap_or_default();
+    let settings = generation_settings(&state).await?;
     Ok(ProviderStatusDto {
         configured: key.is_some(),
         provider_id,
         model_id,
+        temperature: settings.temperature,
+        max_tokens: settings.max_tokens,
     })
 }
 
@@ -718,13 +776,13 @@ async fn generation_settings(
     })
 }
 
-fn record_recent(state: &State<'_, DesktopState>, name: &str, root: &str) {
+fn record_recent(state: &State<'_, DesktopState>, name: &str, root: &str, kind: &str) {
     let recent_guard = match state.recent.lock() {
         Ok(guard) => guard,
         Err(_) => return,
     };
     if let Some(recent) = recent_guard.as_ref() {
-        let _ = recent.record(name, root);
+        let _ = recent.record(name, root, kind);
     }
 }
 
@@ -874,6 +932,36 @@ pub fn run() {
             candidate_list,
             candidate_adopt,
             candidate_reject,
+            // P4 Book V3 唯一边界（16 命令）+ P5-1 增量（create_book/list_chapters）
+            book_cmds::create_book,
+            book_cmds::open_book,
+            book_cmds::get_tracking_state,
+            book_cmds::get_outline,
+            book_cmds::create_chapter,
+            book_cmds::list_chapters,
+            book_cmds::open_chapter,
+            book_cmds::save_chapter,
+            book_cmds::build_contract,
+            book_cmds::build_brief,
+            book_cmds::run_check,
+            book_cmds::create_candidate,
+            book_cmds::adopt_candidate,
+            book_cmds::reject_candidate,
+            book_cmds::book_git_snapshot,
+            book_cmds::start_chain,
+            book_cmds::cancel_chain,
+            book_cmds::get_chain_status,
+            book_cmds::resume_workflow,
+            book_cmds::get_run_ledger,
+            // P5-4 导出
+            book_cmds::export_chapter,
+            // P5-5 声明式技巧卡（只读）
+            book_cmds::list_skills,
+            // P6 迁移（source 只读 + byte-for-byte + 回执）
+            book_cmds::migrate_book,
+            // P5-2 AI 生成（Book V3）
+            book_cmds::book_generate,
+            book_cmds::book_generate_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("error while running LingBi Next");

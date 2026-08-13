@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { markdown } from "@codemirror/lang-markdown";
 import { useAppStore } from "./store/useAppStore";
-import type { CommandError } from "./lib/desktop";
+import { desktop, type CommandError } from "./lib/desktop";
 
 interface HumanError {
   title: string;
@@ -74,6 +74,18 @@ export function humanizeError(code: string): HumanError {
         guidance: "这条候选基于旧正文，请重新生成。",
         action: "regenerate",
       };
+    case "COMMIT_EXIT":
+      return {
+        title: "正文已保存，结算未完成",
+        guidance: "候选内容已写入正文，但章节结算未完成。可以重试采纳，或先检查机检提示。",
+        action: "retry",
+      };
+    case "CHAPTER_COMMITTED":
+      return {
+        title: "本章已提交",
+        guidance: "已提交的章节不能直接改写。旧章编辑的回炉功能将在后续版本提供。",
+        action: "retry",
+      };
     default:
       return {
         title: "操作没有成功",
@@ -119,7 +131,8 @@ function Welcome() {
   const [temperature, setTemperature] = useState("0.7");
   const [maxTokens, setMaxTokens] = useState("2048");
 
-  const createProject = useAppStore((state) => state.createProject);
+  const bookCreate = useAppStore((state) => state.bookCreate);
+  const bookOpen = useAppStore((state) => state.bookOpen);
   const openProject = useAppStore((state) => state.openProject);
   const loadRecent = useAppStore((state) => state.loadRecent);
   const loadProviders = useAppStore((state) => state.loadProviders);
@@ -137,6 +150,19 @@ function Welcome() {
     void loadRecent();
     void loadProviders();
   }, [loadRecent, loadProviders]);
+
+  // P5-5 高级设置回显：重启后从 keyring 读回已存温度/tokens（永不含 key）
+  useEffect(() => {
+    let cancelled = false;
+    void desktop.providerStatus().then((status) => {
+      if (cancelled || !status.configured) return;
+      setTemperature(String(status.temperature));
+      setMaxTokens(String(status.max_tokens));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -158,8 +184,13 @@ function Welcome() {
     return desktop.projectDefaultRoot(value);
   }
 
-  function onOpenRecent(root: string) {
-    void openProject(root);
+  function onOpenRecent(root: string, kind?: string) {
+    // P5-1：recent 混 V2/V3——按格式判别分发，旧 V2 条目走 V2 打开
+    if (kind === "v3") {
+      void bookOpen(root);
+    } else {
+      void openProject(root);
+    }
   }
 
   const selectedProvider =
@@ -225,7 +256,12 @@ function Welcome() {
               <button
                 disabled={!name.trim()}
                 onClick={() =>
-                  void createProject(name.trim(), useCustomRoot ? customRoot : undefined)
+                  void bookCreate(
+                    useCustomRoot && customRoot.trim()
+                      ? customRoot.trim()
+                      : defaultRoot || `文档/LingBi/${name.trim()}`,
+                    name.trim(),
+                  )
                 }
               >
                 创建项目
@@ -244,7 +280,7 @@ function Welcome() {
               <ul className="recent-list">
                 {recentProjects.map((project) => (
                   <li key={project.root}>
-                    <button onClick={() => onOpenRecent(project.root)}>
+                    <button onClick={() => onOpenRecent(project.root, project.kind)}>
                       <strong>{project.name}</strong>
                       <span>{project.root}</span>
                     </button>
@@ -264,7 +300,7 @@ function Welcome() {
                 />
               </label>
               <div className="actions">
-                <button disabled={!openRoot.trim()} onClick={() => void openProject(openRoot.trim())}>
+                <button disabled={!openRoot.trim()} onClick={() => void bookOpen(openRoot.trim())}>
                   打开
                 </button>
               </div>
@@ -479,8 +515,20 @@ function RecoveryBanner() {
 
 function SaveStatus() {
   const session = useAppStore((state) => state.session);
+  const book = useAppStore((state) => state.book);
   const status = useAppStore((state) => state.status);
   const error = useAppStore((state) => state.error);
+  const saveState = useAppStore((state) => state.saveState);
+  // Book V3 模式（P5-1）：保存状态由命令层回执驱动
+  const errorCode = useAppStore((state) => state.errorCode);
+  if (book) {
+    if (saveState === "saving") return <span className="status">正在保存…</span>;
+    if (saveState === "conflict" && errorCode === "DocumentConflict")
+      return <span className="error">保存失败：内容已被外部修改，请重新打开章节</span>;
+    if (saveState === "saved") return <span className="status">已保存</span>;
+    if (error) return <span className="error">保存失败</span>;
+    return <span className="unsaved">未保存</span>;
+  }
   if (status === "正在保存…") return <span className="status">正在保存…</span>;
   if (status === "已保存") return <span className="status">已保存</span>;
   if (status === "保存失败" || error) return <span className="error">保存失败</span>;
@@ -488,9 +536,461 @@ function SaveStatus() {
   return <span className="status">已保存</span>;
 }
 
-function Editor() {
+/// Book V3 编辑器（P5-1：建章/读章/存章/保存状态；AI 面随 P5-2 接入）。
+/// P10 #27 可选 Git 快照（应用内执行；非仓库/无 git 优雅降级消息）。
+function GitSnapshotButton() {
+  const gitSnapshotMsg = useAppStore((state) => state.gitSnapshotMsg);
+  const gitSnapshot = useAppStore((state) => state.gitSnapshot);
+  return (
+    <div className="git-snapshot">
+      <button onClick={() => void gitSnapshot()}>Git 快照</button>
+      {gitSnapshotMsg ? <p className="hint">{gitSnapshotMsg}</p> : null}
+    </div>
+  );
+}
+
+/// P9 #26 本章工作流面板：4 步模式默认（准备本章→AI 写作→检查和优化→
+/// 确认本章），高级模式显式切换展示 8 节点；内部机制（哈希/账本）仅高级
+/// 折叠展示。错误只出现在本面板（黄金路径无条件成立）。
+function WorkflowPanel() {
+  const currentCh = useAppStore((state) => state.currentCh);
+  const chainRunning = useAppStore((state) => state.chainRunning);
+  const chainError = useAppStore((state) => state.chainError);
+  const chainRun = useAppStore((state) => state.chainRun);
+  const chainCurrentNode = useAppStore((state) => state.chainCurrentNode);
+  const chainStart = useAppStore((state) => state.chainStart);
+  const chainCancel = useAppStore((state) => state.chainCancel);
+  const [advanced, setAdvanced] = useState(false);
+
+  const steps = [
+    { id: "prepare", label: "准备本章", nodes: ["contract", "brief"] },
+    { id: "draft", label: "AI 写作", nodes: ["draft"] },
+    { id: "polish", label: "检查和优化", nodes: ["machine-check", "review", "polish"] },
+    { id: "confirm", label: "确认本章", nodes: ["settlement", "handoff"] },
+  ];
+
+  const nodeStatus = (defId: string): string | null =>
+    chainRun?.nodes.find((n) => n.definition_id === defId)?.status ?? null;
+
+  const stepState = (nodes: string[]) => {
+    const statuses = nodes.map((n) => nodeStatus(n)).filter(Boolean);
+    if (statuses.some((s) => s === "Failed" || s === "Cancelled")) return "failed";
+    if (statuses.length > 0 && statuses.every((s) => s === "Completed")) return "done";
+    return "pending";
+  };
+
+  // 运行中：由 current_node 推导当前步骤
+  const runningStep = (() => {
+    if (!chainRunning || !chainCurrentNode) return null;
+    return steps.find((step) => step.nodes.includes(chainCurrentNode))?.id ?? null;
+  })();
+
+  const rejectText: Record<string, string> = {
+    BlockingIssuesRemain: "评审阻塞问题未解（已自动修复 2 轮），未确认本章",
+    MachineCheckFailed: "机检未过，请先完善本章计划（摘要/编号/占位符）",
+    RatchetRejected: "本章已确认过，重写走回炉路径",
+    BudgetExceeded: "Token 预算超限",
+    Cancelled: "已取消",
+  };
+
+  return (
+    <section className="workflow-panel">
+      <h2>本章工作流</h2>
+      {chainRun?.handoff ? (
+        <p className="hint">
+          已确认：{chainRun.handoff.chapter_path}（{chainRun.handoff.words} 字）
+        </p>
+      ) : null}
+      {chainRun && chainRun.reject_reason ? (
+        <p className="workflow-reject">
+          {rejectText[chainRun.reject_reason] ?? chainRun.reject_reason}
+        </p>
+      ) : null}
+      {chainError ? <p className="workflow-error">{chainError}</p> : null}
+      {chainRun && !chainError ? (
+        (() => {
+          const failed = chainRun.nodes.find(
+            (n) => n.status === "Failed" || n.status === "Cancelled",
+          );
+          if (!failed) return null;
+          return (
+            <p className="workflow-error">
+              {failed.definition_id} 失败：{failed.error ?? failed.note}
+            </p>
+          );
+        })()
+      ) : null}
+      <ol className="workflow-steps">
+        {steps.map((step) => {
+          const state = stepState(step.nodes);
+          const active = runningStep === step.id;
+          return (
+            <li
+              key={step.id}
+              className={
+                state === "failed"
+                  ? "failed"
+                  : state === "done"
+                    ? "done"
+                    : active
+                      ? "active"
+                      : ""
+              }
+            >
+              <strong>{step.label}</strong>
+              {state === "done" ? " ✔" : active ? " …" : null}
+            </li>
+          );
+        })}
+      </ol>
+      {chainRunning ? (
+        <button onClick={() => void chainCancel()}>取消运行</button>
+      ) : (
+        <button
+          disabled={currentCh === null}
+          onClick={() => void chainStart()}
+        >
+          运行本章工作流
+        </button>
+      )}
+      <label className="workflow-advanced">
+        <input
+          type="checkbox"
+          checked={advanced}
+          onChange={(event) => setAdvanced(event.target.checked)}
+        />
+        高级模式（8 节点）
+      </label>
+      {advanced && chainRun ? (
+        <ul className="node-list">
+          {chainRun.nodes.map((node) => (
+            <li key={node.node_id} className={node.status.toLowerCase()}>
+              <strong>
+                {node.definition_id} · {node.status}
+              </strong>
+              {node.note ? <span className="hint">{node.note}</span> : null}
+              {node.error ? (
+                <span className="workflow-error">{node.error}</span>
+              ) : null}
+              {advanced ? (
+                <details>
+                  <summary>节点详情</summary>
+                  <pre className="tool-output">
+                    {[
+                      `provider: ${node.provider ?? "-"}`,
+                      `model: ${node.model ?? "-"}`,
+                      `usage: ${
+                        node.usage
+                          ? `${node.usage.prompt_tokens}/${node.usage.completion_tokens}`
+                          : "-"
+                      }`,
+                      `input_hash: ${node.input_hash || "-"}`,
+                      `output_hash: ${node.output_hash || "-"}`,
+                    ].join(String.fromCharCode(10))}
+                  </pre>
+                </details>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {chainRun?.checks && chainRun.checks.length > 0 ? (
+        <details>
+          <summary>机检清单</summary>
+          <ul className="check-list">
+            {chainRun.checks.map((check) => (
+              <li key={check.name} className={check.ok ? "ok" : "fail"}>
+                <strong>
+                  {check.ok ? "✔" : "✘"} {check.name}
+                </strong>
+                <span className="hint">{check.detail}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+    </section>
+  );
+}
+
+function BookEditor() {
+  const book = useAppStore((state) => state.book);
+  const bookChapters = useAppStore((state) => state.bookChapters);
+  const currentCh = useAppStore((state) => state.currentCh);
+  const chapterContent = useAppStore((state) => state.chapterContent);
+  const status = useAppStore((state) => state.status);
+  const error = useAppStore((state) => state.error);
+  const errorCode = useAppStore((state) => state.errorCode);
+  const chapterCreate = useAppStore((state) => state.chapterCreate);
+  const chapterOpen = useAppStore((state) => state.chapterOpen);
+  const chapterSave = useAppStore((state) => state.chapterSave);
+  const bookGenerating = useAppStore((state) => state.bookGenerating);
+  const bookStreamingText = useAppStore((state) => state.bookStreamingText);
+  const bookCandidate = useAppStore((state) => state.bookCandidate);
+  const bookGenerate = useAppStore((state) => state.bookGenerate);
+  const bookCancelGeneration = useAppStore((state) => state.bookCancelGeneration);
+  const bookAdoptCandidate = useAppStore((state) => state.bookAdoptCandidate);
+  const bookRejectCandidate = useAppStore((state) => state.bookRejectCandidate);
+  const bookOutline = useAppStore((state) => state.bookOutline);
+  const bookContract = useAppStore((state) => state.bookContract);
+  const bookBrief = useAppStore((state) => state.bookBrief);
+  const bookChecks = useAppStore((state) => state.bookChecks);
+  const bookDiagnose = useAppStore((state) => state.bookDiagnose);
+  const toolsLoading = useAppStore((state) => state.toolsLoading);
+  const loadOutline = useAppStore((state) => state.loadOutline);
+  const loadContract = useAppStore((state) => state.loadContract);
+  const loadBrief = useAppStore((state) => state.loadBrief);
+  const loadChecks = useAppStore((state) => state.loadChecks);
+  const loadDiagnose = useAppStore((state) => state.loadDiagnose);
+  const skills = useAppStore((state) => state.skills);
+  const loadSkills = useAppStore((state) => state.loadSkills);
+  const bookExport = useAppStore((state) => state.bookExport);
+  const lastBookExport = useAppStore((state) => state.lastBookExport);
   const [instruction, setInstruction] = useState("生成一个雨夜开场");
+  const [newTitle, setNewTitle] = useState("");
+
+  const setChapterContent = (content: string) =>
+    useAppStore.setState({ chapterContent: content, saveState: "idle" });
+
+  // 自动保存：2 秒防抖 + 内容无变化跳过 + CAS 守卫（哈希由 chapterOpen/
+  // 上次回执持有，外部修改即 conflict 状态，用户字节保留）
+  useEffect(() => {
+    const book = useAppStore.getState().book;
+    if (!book || currentCh === null) return;
+    const timer = window.setTimeout(() => {
+      const state = useAppStore.getState();
+      if (state.chapterContent !== state.lastSavedChapterContent) {
+        void state.chapterSave();
+      }
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [chapterContent, currentCh]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void chapterSave();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [chapterSave]);
+
+  if (!book) return <Welcome />;
+
+  return (
+    <main className="editor-shell">
+      <aside className="chapters">
+        <h2>章节</h2>
+        {bookChapters.map((chapter) => (
+          <button
+            key={chapter.ch}
+            className={chapter.ch === currentCh ? "active" : ""}
+            onClick={() => void chapterOpen(chapter.ch)}
+          >
+            {chapter.title}
+          </button>
+        ))}
+        <div className="new-chapter">
+          <input
+            aria-label="新章节标题"
+            value={newTitle}
+            onChange={(event) => setNewTitle(event.target.value)}
+            placeholder="章节标题"
+          />
+          <button
+            disabled={!newTitle.trim()}
+            onClick={() => {
+              void chapterCreate(newTitle.trim());
+              setNewTitle("");
+            }}
+          >
+            新建章节
+          </button>
+        </div>
+        <details className="advanced">
+          <summary>高级功能</summary>
+          <button onClick={() => useAppStore.setState({ selectedTab: "welcome" })}>
+            返回首页
+          </button>
+          <GitSnapshotButton />
+        </details>
+      </aside>
+      <aside className="tools">
+        <WorkflowPanel />
+        <h2>写作工具</h2>
+        <details>
+          <summary onClick={() => void loadOutline()}>大纲</summary>
+          {bookOutline.length === 0 ? (
+            <p className="hint">暂无细纲蓝图</p>
+          ) : (
+            <ul className="outline-list">
+              {bookOutline.map((row) => (
+                <li key={String(row.ch)}>
+                  <strong>第{String(row.ch)}章</strong>{" "}
+                  {String(row.title ?? "")}
+                  {row.goal ? <p className="hint">{String(row.goal)}</p> : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </details>
+        <details>
+          <summary onClick={() => void loadContract()}>合同</summary>
+          <pre className="tool-output">{bookContract || "点击加载"}</pre>
+        </details>
+        <details>
+          <summary onClick={() => void loadBrief()}>任务书</summary>
+          <pre className="tool-output">{bookBrief || "点击加载"}</pre>
+        </details>
+        <details>
+          <summary onClick={() => void loadChecks()}>机检</summary>
+          {bookChecks.length === 0 ? (
+            <p className="hint">点击加载机检结果</p>
+          ) : (
+            <ul className="check-list">
+              {bookChecks.map((check) => (
+                <li key={check.name} className={check.ok ? "ok" : "fail"}>
+                  <strong>
+                    {check.ok ? "✔" : "✘"} {check.name}
+                  </strong>
+                  <span className="hint">{check.detail}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </details>
+        <details>
+          <summary onClick={() => void loadDiagnose()}>断点诊断</summary>
+          <pre className="tool-output">{bookDiagnose || "点击加载"}</pre>
+        </details>
+        <details>
+          <summary onClick={() => void loadSkills()}>技能</summary>
+          {skills.length === 0 ? (
+            <p className="hint">点击加载技能卡</p>
+          ) : (
+            <ul className="check-list">
+              {skills.map((card) => (
+                <li key={card.id} className="skill-card">
+                  <strong>{card.title}</strong>
+                  <span className="hint">{card.description}</span>
+                  <ol>
+                    {card.steps.map((step, index) => (
+                      <li key={index}>{step}</li>
+                    ))}
+                  </ol>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="hint">技能卡为声明式只读展示</p>
+        </details>
+        {toolsLoading ? <p className="hint">加载中…</p> : null}
+      </aside>
+      <section className="editor">
+        <header>
+          <strong>
+            {currentCh !== null
+              ? bookChapters.find((c) => c.ch === currentCh)?.title ?? `第${currentCh}章`
+              : book.name}
+          </strong>
+          <div className="header-status">
+            {status && !["正在保存…", "已保存", "保存失败"].includes(status) ? (
+              <span className="hint">{status}</span>
+            ) : null}
+            <SaveStatus />
+          </div>
+        </header>
+        <CodeMirror
+          value={chapterContent}
+          height="calc(100vh - 96px)"
+          extensions={[markdown()]}
+          onChange={setChapterContent}
+        />
+        <footer>
+          <button disabled={currentCh === null} onClick={() => void chapterSave()}>
+            保存
+          </button>
+          <input
+            aria-label="写作要求"
+            value={instruction}
+            onChange={(event) => setInstruction(event.target.value)}
+          />
+          <button
+            disabled={bookGenerating || currentCh === null}
+            onClick={() => bookGenerate(instruction)}
+          >
+            {bookGenerating ? "生成中" : "生成"}
+          </button>
+          {bookGenerating ? (
+            <button onClick={() => void bookCancelGeneration()}>取消</button>
+          ) : null}
+          <button
+            disabled={currentCh === null}
+            onClick={() => void bookExport("docx")}
+          >
+            导出 DOCX
+          </button>
+          <button
+            disabled={currentCh === null}
+            onClick={() => void bookExport("md")}
+          >
+            导出 MD
+          </button>
+          <button
+            disabled={currentCh === null}
+            onClick={() => void bookExport("txt")}
+          >
+            导出 TXT
+          </button>
+          {lastBookExport ? (
+            <span className="hint" title={lastBookExport.path}>
+              已导出到 {lastBookExport.path}
+            </span>
+          ) : null}
+        </footer>
+        {error ? (
+          <ErrorPanel
+            error={{
+              code: errorCode ?? "UNKNOWN",
+              message: error,
+              retryable: false,
+            }}
+          />
+        ) : null}
+      </section>
+      <aside className="candidate">
+        <h2>AI 助手</h2>
+        {bookGenerating && bookStreamingText ? (
+          <>
+            <p className="streaming">{bookStreamingText}</p>
+            <p className="hint">正在实时输出…</p>
+          </>
+        ) : null}
+        {bookCandidate ? (
+          <>
+            <h3>候选内容</h3>
+            <p>{bookCandidate.content}</p>
+            <div className="actions">
+              <button onClick={() => void bookAdoptCandidate()}>采纳</button>
+              <button onClick={() => void bookRejectCandidate()}>拒绝</button>
+            </div>
+          </>
+        ) : (
+          <p>{bookGenerating ? "AI 正在创作..." : "AI 生成后在此确认"}</p>
+        )}
+      </aside>
+    </main>
+  );
+}
+
+function Editor() {
   const session = useAppStore((state) => state.session);
+  const book = useAppStore((state) => state.book);
+  const [instruction, setInstruction] = useState("生成一个雨夜开场");
+  // Book V3 模式优先（P5-1）；V2 会话模式保留（AI 生成/导出在 P5-2/P5-4 迁移）
+  if (book) return <BookEditor />;
   const documents = useAppStore((state) => state.documents);
   const documentContent = useAppStore((state) => state.documentContent);
   const candidate = useAppStore((state) => state.candidate);
@@ -564,8 +1064,10 @@ function Editor() {
           <button onClick={() => useAppStore.setState({ selectedTab: "welcome" })}>
             返回首页
           </button>
+          <GitSnapshotButton />
         </details>
       </aside>
+
       <section className="editor">
         <RecoveryBanner />
         <header>

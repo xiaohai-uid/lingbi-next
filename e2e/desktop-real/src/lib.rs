@@ -16,7 +16,7 @@ pub mod flow;
 pub mod platform;
 pub mod webdriver;
 
-pub use flow::golden_path;
+pub use flow::{consumer_full_scenario, golden_path};
 pub use platform::{DisplayGuard, NativeDriver, check_infra, release_binary, start_display};
 pub use webdriver::WebDriver;
 

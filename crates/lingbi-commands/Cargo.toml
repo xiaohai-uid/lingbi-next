@@ -1,0 +1,24 @@
+[package]
+name = "lingbi-commands"
+version = "0.1.0"
+description = "P4 command layer — Book V3 single boundary (16 commands)"
+edition = "2021"
+
+[dependencies]
+lingbi-application = { path = "../lingbi-application" }
+lingbi-book = { path = "../lingbi-book" }
+lingbi-contracts = { path = "../lingbi-contracts" }
+lingbi-ai = { path = "../lingbi-ai" }
+lingbi-import-export = { path = "../lingbi-import-export" }
+lingbi-migration = { path = "../lingbi-migration" }
+lingbi-workflow = { path = "../lingbi-workflow" }
+lingbi-recovery = { path = "../lingbi-recovery" }
+lingbi-storage = { path = "../lingbi-storage" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["serde", "v4"] }
+
+[dev-dependencies]
+lingbi-workflow = { path = "../lingbi-workflow", features = ["test-support"] }
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

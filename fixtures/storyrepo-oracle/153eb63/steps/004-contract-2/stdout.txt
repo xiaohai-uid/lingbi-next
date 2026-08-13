@@ -1,0 +1,15 @@
+{
+ "goal": "阿米夜访,米粒失联",
+ "hard_constraints": [
+  "不暴露 S-001"
+ ],
+ "forbidden": [
+  "赵三"
+ ],
+ "foreshadow_todo": [],
+ "ending_requirement": "无；P-002；S-001 揭示",
+ "sources": {
+  "追踪状态": "C:\\Users\\a1691\\AppData\\Local\\Temp\\sr-oracle-live\\追踪\\_tracking-state.json",
+  "细纲蓝图": "C:\\Users\\a1691\\AppData\\Local\\Temp\\sr-oracle-live\\大纲\\细纲蓝图.md"
+ }
+}

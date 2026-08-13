@@ -1,0 +1,2 @@
+✅ 批次计划已生成: C:\Users\a1691\AppData\Local\Temp\sr-oracle-live\工作区\批次-20260808-110645.json(2 章, mode=subagent-parallel)
+   worker 协议:每个子代理读 状态卡+合同(计划内) → 写正文+front matter → doctor precommit 通过 → 返回

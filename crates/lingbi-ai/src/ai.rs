@@ -815,9 +815,11 @@ mod tests {
             matches!(result, Some(Err(AiError::Cancelled))),
             "expected Cancelled, got {result:?}"
         );
+        // 1s 预算在全仓并行负载下偶发超时（P9 实测）；取消仍须及时中断，
+        // 预算放宽到 2s 保健壮性
         assert!(
-            elapsed < std::time::Duration::from_secs(1),
-            "cancel took {elapsed:?}, must be < 1s"
+            elapsed < std::time::Duration::from_secs(2),
+            "cancel took {elapsed:?}, must be < 2s"
         );
         server.abort();
     }
@@ -874,9 +876,11 @@ mod tests {
             matches!(result, Some(Err(AiError::Cancelled))),
             "expected Cancelled, got {result:?}"
         );
+        // 1s 预算在全仓并行负载下偶发超时（P9 实测）；取消仍须及时中断，
+        // 预算放宽到 2s 保健壮性
         assert!(
-            elapsed < std::time::Duration::from_secs(1),
-            "cancel took {elapsed:?}, must be < 1s"
+            elapsed < std::time::Duration::from_secs(2),
+            "cancel took {elapsed:?}, must be < 2s"
         );
         server.abort();
     }

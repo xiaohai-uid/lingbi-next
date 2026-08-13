@@ -1,0 +1,21 @@
+budget: 0.2KB OK
+
+[recent_endings]
+
+[summary_chain]
+  
+
+[entity_cards]
+  【阿米】## 身份
+主角,沉默寡言。
+## 现状
+第一章与米粒重逢。
+
+  【米粒】## 身份
+灯下之人,写作者。
+## 现状
+第二章失联。
+
+
+[next_chapter_injection]
+  阿米夜访,米粒失联；S-001；P-001；无

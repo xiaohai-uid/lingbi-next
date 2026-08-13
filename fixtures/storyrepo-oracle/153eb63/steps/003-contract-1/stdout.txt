@@ -1,0 +1,15 @@
+{
+ "goal": "阿米与米粒重逢,火光预示",
+ "hard_constraints": [
+  "不写赵三"
+ ],
+ "forbidden": [
+  "赵三"
+ ],
+ "foreshadow_todo": [],
+ "ending_requirement": "S-001；P-001；无",
+ "sources": {
+  "追踪状态": "C:\\Users\\a1691\\AppData\\Local\\Temp\\sr-oracle-live\\追踪\\_tracking-state.json",
+  "细纲蓝图": "C:\\Users\\a1691\\AppData\\Local\\Temp\\sr-oracle-live\\大纲\\细纲蓝图.md"
+ }
+}

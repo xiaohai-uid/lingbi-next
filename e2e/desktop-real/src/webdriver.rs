@@ -1,10 +1,7 @@
 //! WebDriver client and UI helpers for driving the real LingBi binary.
 
 use serde_json::{Value, json};
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
 use std::path::Path;
-use std::thread;
 use std::time::{Duration, Instant};
 
 /// Blocking WebDriver client for a single session.
@@ -108,7 +105,7 @@ pub fn wait_until(driver: &WebDriver, script: &str, timeout: Duration, ready: &s
             started.elapsed() < timeout,
             "timed out waiting for {ready}: {value}"
         );
-        thread::sleep(Duration::from_millis(500));
+        std::thread::sleep(Duration::from_millis(500));
     }
 }
 
@@ -124,6 +121,37 @@ pub fn click_button(driver: &WebDriver, text: &str) {
     );
     let value = driver.execute(&script);
     assert_eq!(value.as_str(), Some("ok"), "click button {text}: {value}");
+}
+
+/// 重试式点击（P11 #28）：React 异步重渲染窗口内按钮可能短暂缺席，
+/// 最多重试 3 次（300ms 间隔）。
+pub fn click_button_retry(driver: &WebDriver, text: &str) {
+    let mut last: serde_json::Value = serde_json::Value::Null;
+    for _ in 0..8 {
+        let script = format!(
+            r#"
+        const buttons = Array.from(document.querySelectorAll('button'));
+        const button = buttons.find((item) => item.textContent?.includes({text:?}));
+        if (!button) return 'missing';
+        button.click();
+        return 'ok';
+        "#
+        );
+        last = driver.execute(&script);
+        if last.as_str() == Some("ok") {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    // 失败现场：页面文本 + 全部按钮文本（区分「按钮确实不存在」与
+    // 「文本在非按钮元素上」，P11 #28 诊断）
+    let scene = driver.execute(
+        r#"
+        const buttons = Array.from(document.querySelectorAll('button')).map((item) => item.textContent?.trim());
+        return JSON.stringify({ buttons, body: document.body.innerText.slice(0, 400) });
+        "#,
+    );
+    panic!("click button retry {text} failed: {last}; scene: {scene}");
 }
 
 pub fn wait_for_text(driver: &WebDriver, text: &str, timeout: Duration) {
@@ -152,6 +180,44 @@ pub fn edit_code_mirror(driver: &WebDriver, text: &str) {
         "#
     );
     wait_until(driver, &script, Duration::from_secs(10), "ok");
+}
+
+/// 追加式写入（P11 #28 迁移书续写）：不覆盖正文，仅把选区折叠到末尾后
+/// 插入——迁移书已有正文不能被整段替换。
+pub fn append_code_mirror(driver: &WebDriver, text: &str) {
+    let text_json = serde_json::to_string(text).expect("json");
+    let script = format!(
+        r#"
+        const content = document.querySelector('.cm-content');
+        if (!content) return 'missing';
+        content.focus();
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(content);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        document.execCommand('insertText', false, {text_json});
+        return document.body.innerText.includes({text_json}) ? 'ok' : 'wait';
+        "#
+    );
+    wait_until(driver, &script, Duration::from_secs(10), "ok");
+}
+
+/// 单次断言页面不包含某文本（P11 #28 换书清链：上次书的链/候选不得泄漏）。
+/// 书仓已打开的状态文本出现时，store 的 set 已同步完成，单次检查即可。
+pub fn assert_text_absent(driver: &WebDriver, text: &str) {
+    let script = format!(
+        r#"
+        return document.body.innerText.includes({text:?}) ? 'present' : 'absent';
+        "#
+    );
+    let value = driver.execute(&script);
+    assert_eq!(
+        value.as_str(),
+        Some("absent"),
+        "stale text still on page: {text}"
+    );
 }
 
 pub fn session_state(driver: &WebDriver) -> Value {
@@ -200,41 +266,32 @@ pub fn chapter_state(driver: &WebDriver, title: &str) -> Value {
         .unwrap_or_else(|error| panic!("chapter state json: {error}: {serialized}"))
 }
 
-/// Start a local SSE chat-completions server; returns its base URL.
-pub fn start_sse_server() -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind sse");
-    let port = listener.local_addr().expect("local addr").port();
-    thread::spawn(move || {
-        for mut stream in listener.incoming().flatten() {
-            let _ = handle_sse(&mut stream);
-        }
-    });
-    format!("http://127.0.0.1:{port}/v1/chat/completions")
-}
-
-fn handle_sse(stream: &mut TcpStream) -> std::io::Result<()> {
-    let mut buffer = [0u8; 4096];
-    let mut read = 0;
-    loop {
-        let count = stream.read(&mut buffer[read..])?;
-        if count == 0 {
-            break;
-        }
-        read += count;
-        if buffer[..read]
-            .windows(4)
-            .any(|window| window == b"\r\n\r\n")
-        {
-            break;
-        }
-    }
-    let body =
-        "data: {\"choices\":[{\"delta\":{\"content\":\"E2E候选正文\"}}]}\n\ndata: [DONE]\n\n";
-    write!(
-        stream,
-        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
-    )?;
-    stream.flush()
+/// Book V3 状态（P5-1）：追踪状态 + 指定章正文（open_chapter 命令）。
+/// `ch` 为 None 时取追踪状态第一章（若存在）。
+pub fn book_state(driver: &WebDriver, ch: Option<i64>) -> Value {
+    let script = r#"
+        const done = arguments[arguments.length - 1];
+        window.__TAURI_INTERNALS__.invoke('get_tracking_state').then((tracking) => {
+          const chapters = Object.keys(tracking.chapters || {}).map(Number).sort((a, b) => a - b);
+          const target = {targetCh} ?? chapters[0] ?? null;
+          if (target === null) return done(JSON.stringify({ state_revision: tracking.state_revision, chapters, content: null }));
+          return window.__TAURI_INTERNALS__.invoke('open_chapter', { ch: target }).then((chapter) => done(JSON.stringify({
+            state_revision: tracking.state_revision,
+            chapters,
+            ch: target,
+            title: chapter.title,
+            content: chapter.body,
+            content_hash: chapter.content_hash
+          }))).catch((error) => done('error:' + error));
+        }).catch((error) => done('error:' + error));
+        "#;
+    let target = match ch {
+        Some(n) => n.to_string(),
+        None => "null".to_owned(),
+    };
+    let script = script.replace("{targetCh}", &target);
+    let value = driver.execute_async(&script, vec![]);
+    let serialized = value.as_str().expect("book state string");
+    serde_json::from_str(serialized)
+        .unwrap_or_else(|error| panic!("book state json: {error}: {serialized}"))
 }

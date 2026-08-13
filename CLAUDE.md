@@ -62,3 +62,17 @@ This project is indexed by GitNexus as **lingbi-next** (1462 symbols, 3660 relat
 | Work in the Cluster_20 area (6 symbols) | `.claude/skills/generated/cluster-20/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live as GitHub issues; use the `gh` CLI for all operations. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five canonical labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: root `CONTEXT.md` + `docs/adr/`. See `docs/agents/domain.md`.

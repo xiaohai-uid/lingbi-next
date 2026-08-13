@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lingbi.com/contracts/book/book-v3.schema.json",
+  "title": "LingBi Book Project V3 — 数据契约",
+  "description": "Book V3 唯一项目格式的数据层契约：book.yaml（书配置）与 追踪/_tracking-state.json（唯一权威状态）。目录树契约见 book-v3.tree.json。",
+  "$defs": {
+    "book_config": {
+      "type": "object",
+      "description": "book.yaml 平铺 KV（front-matter 风格，数值字段转 int；解析语义与 storyrepo config.py 一致）。",
+      "required": ["name"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid", "description": "书 id（旧书仓/旧项目迁移时生成；新建书必填）" },
+        "name": { "type": "string" },
+        "status": { "type": "string" },
+        "total_chapters": { "type": "integer", "minimum": 1 },
+        "min_words_per_chapter": { "type": "integer", "minimum": 0 },
+        "max_words_per_chapter": { "type": "integer", "minimum": 0 },
+        "target_words": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "tracking_state": {
+      "type": "object",
+      "description": "唯一权威状态。仅经 Rust transaction 写入；state_revision 每事务单调 +1。",
+      "required": ["spec", "book", "imported_through_chapter", "state_revision", "chapters"],
+      "properties": {
+        "spec": { "const": 1 },
+        "book": { "type": "string" },
+        "imported_through_chapter": { "type": "integer", "minimum": 0 },
+        "state_revision": { "type": "integer", "minimum": 0 },
+        "chapters": {
+          "type": "object",
+          "patternProperties": { "^[0-9]+$": { "$ref": "#/$defs/chapter_entry" } }
+        },
+        "promises": {
+          "type": "object",
+          "patternProperties": { "^P-[0-9]+$": { "$ref": "#/$defs/promise_entry" } }
+        },
+        "info_gaps": {
+          "type": "object",
+          "patternProperties": { "^S-[0-9]+$": { "$ref": "#/$defs/info_gap_entry" } }
+        },
+        "timeline": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/timeline_event" }
+        },
+        "entity_states": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/entity_state" }
+        },
+        "reader_knowledge": {
+          "type": "object",
+          "properties": { "reveals": { "type": "array" } }
+        }
+      },
+      "additionalProperties": true
+    },
+    "chapter_entry": {
+      "type": "object",
+      "required": ["status", "title", "words"],
+      "properties": {
+        "status": { "type": "string" },
+        "title": { "type": "string" },
+        "words": { "type": "string" }
+      }
+    },
+    "promise_entry": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["open", "adv", "done"] },
+        "open_ch": { "type": ["integer", "null"] },
+        "adv_ch": { "type": ["integer", "null"] },
+        "done_ch": { "type": ["integer", "null"] },
+        "note": { "type": "string" }
+      }
+    },
+    "info_gap_entry": {
+      "type": "object",
+      "required": ["revealed"],
+      "properties": {
+        "revealed": { "type": "boolean" },
+        "plant_ch": { "type": ["integer", "null"] },
+        "reveal_ch": { "type": ["integer", "null"] },
+        "note": { "type": "string" }
+      }
+    },
+    "timeline_event": {
+      "type": "object",
+      "required": ["ch", "event", "kind"],
+      "properties": {
+        "ch": { "type": "integer" },
+        "event": { "type": "string" },
+        "kind": { "enum": ["fact", "reveal", "private"] }
+      }
+    },
+    "entity_state": {
+      "type": "object",
+      "required": ["first_ch"],
+      "properties": {
+        "first_ch": { "type": "integer" },
+        "where": { "type": "string" },
+        "state": { "type": "string" }
+      }
+    }
+  }
+}
