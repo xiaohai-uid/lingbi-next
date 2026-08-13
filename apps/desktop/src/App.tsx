@@ -563,10 +563,10 @@ function WorkflowPanel() {
   const [advanced, setAdvanced] = useState(false);
 
   const steps = [
-    { id: "prepare", label: "准备本章", nodes: ["contract", "brief"] },
-    { id: "draft", label: "AI 写作", nodes: ["draft"] },
-    { id: "polish", label: "检查和优化", nodes: ["machine-check", "review", "polish"] },
-    { id: "confirm", label: "确认本章", nodes: ["settlement", "handoff"] },
+    { id: "prepare", label: "准备本章", nodes: ["contract", "brief"], hint: "合同 · 任务书" },
+    { id: "draft", label: "AI 写作", nodes: ["draft"], hint: "正文" },
+    { id: "polish", label: "检查和优化", nodes: ["machine-check", "review", "polish"], hint: "机检 · 评审 · 润色" },
+    { id: "confirm", label: "确认本章", nodes: ["settlement", "handoff"], hint: "定稿 · 交付" },
   ];
 
   const nodeStatus = (defId: string): string | null =>
@@ -585,6 +585,12 @@ function WorkflowPanel() {
     return steps.find((step) => step.nodes.includes(chainCurrentNode))?.id ?? null;
   })();
 
+  const isDone = !!chainRun && chainRun.status === "Completed";
+  const hasFailure = !!chainRun &&
+    (chainRun.status === "Failed" || chainRun.nodes.some(
+      (n) => n.status === "Failed" || n.status === "Cancelled",
+    ));
+
   const rejectText: Record<string, string> = {
     BlockingIssuesRemain: "评审阻塞问题未解（已自动修复 2 轮），未确认本章",
     MachineCheckFailed: "机检未过，请先完善本章计划（摘要/编号/占位符）",
@@ -593,20 +599,35 @@ function WorkflowPanel() {
     Cancelled: "已取消",
   };
 
+  const tokensUsed = (chainRun?.nodes ?? [])
+    .reduce((sum, n) => {
+      const u = n.usage;
+      return sum + (u?.prompt_tokens ?? 0) + (u?.completion_tokens ?? 0);
+    }, 0);
+  const TOKEN_BUDGET = 150_000;
+  const tokenRatio = Math.min(tokensUsed / TOKEN_BUDGET, 1);
+  const tokenPct = Math.round(tokenRatio * 100);
+
+  const activeStepIdx = steps.findIndex((s) => s.id === runningStep);
+
   return (
     <section className="workflow-panel">
       <h2>本章工作流</h2>
       {chainRun?.handoff ? (
-        <p className="hint">
+        <p className="hint-soft">
           已确认：{chainRun.handoff.chapter_path}（{chainRun.handoff.words} 字）
         </p>
       ) : null}
       {chainRun && chainRun.reject_reason ? (
-        <p className="workflow-reject">
+        <div className="alert alert-reject">
           {rejectText[chainRun.reject_reason] ?? chainRun.reject_reason}
-        </p>
+        </div>
       ) : null}
-      {chainError ? <p className="workflow-error">{chainError}</p> : null}
+      {chainError ? (
+        <div className="alert">
+          <strong>引擎异常：</strong>{chainError}
+        </div>
+      ) : null}
       {chainRun && !chainError ? (
         (() => {
           const failed = chainRun.nodes.find(
@@ -614,101 +635,164 @@ function WorkflowPanel() {
           );
           if (!failed) return null;
           return (
-            <p className="workflow-error">
-              {failed.definition_id} 失败：{failed.error ?? failed.note}
-            </p>
+            <div className="alert">
+              <strong>{failed.definition_id} 失败：</strong>
+              {failed.error ?? failed.note}
+            </div>
           );
         })()
       ) : null}
-      <ol className="workflow-steps">
-        {steps.map((step) => {
+
+      <div className="step-bar" role="navigation" aria-label="工作流进度">
+        {steps.map((step, i) => {
           const state = stepState(step.nodes);
-          const active = runningStep === step.id;
+          const beforeActive = runningStep && i > 0 && i <= activeStepIdx;
+          const stateClass =
+            state === "failed"
+              ? "state-failed"
+              : state === "done"
+                ? "state-done"
+                : step.id === runningStep
+                  ? "state-active"
+                  : "state-pending";
+
+          const connector = i < steps.length - 1 ? (
+            <span className={\`connector \${beforeActive ? "before-active" : ""}\`} aria-hidden="true" />
+          ) : null;
+
           return (
-            <li
-              key={step.id}
-              className={
-                state === "failed"
-                  ? "failed"
-                  : state === "done"
-                    ? "done"
-                    : active
-                      ? "active"
-                      : ""
-              }
-            >
-              <strong>{step.label}</strong>
-              {state === "done" ? " ✔" : active ? " …" : null}
-            </li>
+            <span key={\`step-\${step.id}\`}>
+              <div className={\`step-col \${stateClass}\`}>
+                <div className="step-circle" aria-label={step.label}>
+                  {state === "done" ? "✔" : state === "failed" ? "✘" : i + 1}
+                </div>
+                <div className="step-title">{step.label}</div>
+                <div className="step-hint">{step.hint}</div>
+              </div>
+              {connector}
+            </span>
           );
         })}
-      </ol>
-      {chainRunning ? (
-        <button onClick={() => void chainCancel()}>取消运行</button>
-      ) : (
-        <button
-          disabled={currentCh === null}
-          onClick={() => void chainStart()}
-        >
-          运行本章工作流
-        </button>
-      )}
-      <label className="workflow-advanced">
+      </div>
+
+      <div className="workflow-actions">
+        {chainRunning ? (
+          <>
+            <button className="btn-run" disabled aria-hidden="true">运行本章工作流</button>
+            <button className="btn-cancel" onClick={() => void chainCancel()}>取消运行</button>
+          </>
+        ) : isDone ? (
+          <span className="btn-done-text" role="status">本章已确认</span>
+        ) : hasFailure ? (
+          <button
+            className="btn-retry"
+            disabled={currentCh === null}
+            onClick={() => void chainStart()}
+          >
+            重新运行
+          </button>
+        ) : (
+          <button
+            className="btn-run"
+            disabled={currentCh === null}
+            onClick={() => void chainStart()}
+          >
+            运行本章工作流
+          </button>
+        )}
+      </div>
+
+      <label className="workflow-toggle" aria-label="高级模式（8 节点）">
+        <span>高级模式（8 节点）</span>
         <input
           type="checkbox"
           checked={advanced}
           onChange={(event) => setAdvanced(event.target.checked)}
         />
-        高级模式（8 节点）
+        <span className="toggle-switch" aria-hidden="true" />
       </label>
-      {advanced && chainRun ? (
-        <ul className="node-list">
-          {chainRun.nodes.map((node) => (
-            <li key={node.node_id} className={node.status.toLowerCase()}>
-              <strong>
-                {node.definition_id} · {node.status}
-              </strong>
-              {node.note ? <span className="hint">{node.note}</span> : null}
-              {node.error ? (
-                <span className="workflow-error">{node.error}</span>
-              ) : null}
-              {advanced ? (
-                <details>
-                  <summary>节点详情</summary>
-                  <pre className="tool-output">
-                    {[
-                      `provider: ${node.provider ?? "-"}`,
-                      `model: ${node.model ?? "-"}`,
-                      `usage: ${
-                        node.usage
-                          ? `${node.usage.prompt_tokens}/${node.usage.completion_tokens}`
-                          : "-"
-                      }`,
-                      `input_hash: ${node.input_hash || "-"}`,
-                      `output_hash: ${node.output_hash || "-"}`,
-                    ].join(String.fromCharCode(10))}
-                  </pre>
-                </details>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      {chainRun?.checks && chainRun.checks.length > 0 ? (
-        <details>
-          <summary>机检清单</summary>
-          <ul className="check-list">
-            {chainRun.checks.map((check) => (
-              <li key={check.name} className={check.ok ? "ok" : "fail"}>
-                <strong>
-                  {check.ok ? "✔" : "✘"} {check.name}
-                </strong>
-                <span className="hint">{check.detail}</span>
-              </li>
-            ))}
-          </ul>
-        </details>
-      ) : null}
+
+      <div className={\`advanced-panel \${advanced ? "open" : ""}\`}>
+        {chainRun ? (
+          <table className="node-table">
+            <thead>
+              <tr>
+                <th>节点</th>
+                <th>状态</th>
+                <th>详情</th>
+              </tr>
+            </thead>
+            <tbody>
+              {chainRun.nodes.map((node) => (
+                <tr key={node.node_id}>
+                  <td><strong>{node.definition_id}</strong></td>
+                  <td className={\`status-\${node.status.toLowerCase()}\`}>{node.status}</td>
+                  <td>
+                    {node.error ? (
+                      <span className="node-error">{node.error}</span>
+                    ) : node.note ? (
+                      <span className="node-detail">{node.note}</span>
+                    ) : null}
+                    <details>
+                      <summary>节点详情</summary>
+                      <pre className="tool-output">
+                        {[
+                          \`provider: \${node.provider ?? "-"}\`,
+                          \`model: \${node.model ?? "-"}\`,
+                          \`usage: \${
+                            node.usage
+                              ? \`prompt:\${node.usage.prompt_tokens} / completion:\${node.usage.completion_tokens}\`
+                              : "-"
+                          }\`,
+                          \`input_hash: \${node.input_hash || "-"}\`,
+                          \`output_hash: \${node.output_hash || "-"}\`,
+                        ].join(String.fromCharCode(10))}
+                      </pre>
+                    </details>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : null}
+
+        {tokensUsed > 0 && (
+          <div className="token-ledger">
+            <div className="ledger-header">
+              <span className="ledger-title">Token 用量</span>
+              <span className="ledger-value">
+                {tokensUsed.toLocaleString()} / {TOKEN_BUDGET.toLocaleString()}（{tokenPct}%）
+              </span>
+            </div>
+            <div className="ledger-bar" aria-hidden="true">
+              <div
+                className={\`ledger-fill \${tokenRatio >= 0.9 ? "danger" : tokenRatio >= 0.7 ? "warn" : ""}\`}
+                style={{ width: \`\${tokenPct}%\` }}
+              />
+            </div>
+            <div className="ledger-grid">
+              <span><b>已用：</b>{tokensUsed.toLocaleString()}</span>
+              <span><b>预算：</b>{(TOKEN_BUDGET - tokensUsed).toLocaleString()}</span>
+            </div>
+          </div>
+        )}
+
+        {chainRun?.checks && chainRun.checks.length > 0 ? (
+          <details>
+            <summary>机检清单</summary>
+            <ul className="check-list">
+              {chainRun.checks.map((check) => (
+                <li key={check.name} className={check.ok ? "ok" : "fail"}>
+                  <strong>
+                    {check.ok ? "✔" : "✘"} {check.name}
+                  </strong>
+                  <span className="hint">{check.detail}</span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
+      </div>
     </section>
   );
 }
@@ -1147,3 +1231,4 @@ export default function App() {
   const selectedTab = useAppStore((state) => state.selectedTab);
   return selectedTab === "welcome" ? <Welcome /> : <Editor />;
 }
+
