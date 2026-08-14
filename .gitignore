@@ -4,5 +4,6 @@
 **/node_modules/
 dist/
 build/
+tool/drivers/
 *.log
 .DS_Store
