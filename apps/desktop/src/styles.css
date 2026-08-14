@@ -457,7 +457,7 @@ input::placeholder { color: var(--ink-4); }
   border: 0.5px solid transparent;
   transition: all 0.25s var(--ease);
 }
-.workflow-steps li strong { font-weight: 500; display: block; font-size: 10.5px; }
+.workflow-steps li strong { font-weight: 500; font-size: 10.5px; }
 .workflow-steps li.active {
   background: var(--accent-soft);
   color: var(--accent);
