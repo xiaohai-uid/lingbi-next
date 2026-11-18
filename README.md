@@ -7,6 +7,8 @@ LingBi Next is the local-first desktop architecture for LingBi — an AI-assiste
 - **Cloud**: modular Go monolith for account, entitlement, releases, and future official AI services
 - **Website**: Next.js for download, account, pricing, and purchase flows
 
+For the Windows writing app, see [LingBi releases](https://github.com/xiaohai-uid/lingbi/releases). To work on the Rust/Tauri implementation in this repository, start with the build and test commands below.
+
 ## Status: 0.9.0 (Fusion P0–P14 complete)
 
 All fusion phases shipped on `main`:
@@ -44,7 +46,7 @@ pnpm tauri build   # produces NSIS installer + portable ZIP
 ## Test
 
 ```bash
-pnpm test              # frontend vitest (36 tests)
+pnpm --filter @lingbi/desktop test  # frontend Vitest suite
 cargo test --workspace # Rust core
 ```
 
